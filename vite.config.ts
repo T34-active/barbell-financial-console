@@ -1,3 +1,5 @@
+import { copyFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, type ProxyOptions } from 'vite'
 import vue from '@vitejs/plugin-vue'
@@ -5,7 +7,7 @@ import UnoCSS from 'unocss/vite'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
-import { financeCloudPlugin } from './vite-plugin-finance-cloud'
+import { financeCloudPlugin } from './vite-plugin-finance-cloud.js'
 
 const chromeUA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
@@ -61,11 +63,29 @@ const apiProxies: Record<string, ProxyOptions> = {
 
 const elementPlusResolver = ElementPlusResolver({ importStyle: 'css' })
 
+/** 项目站路径，对应 https://<owner>.github.io/barbell-financial-console/ */
+const githubPagesBase = '/barbell-financial-console/'
+
+function githubPagesSpaFallback() {
+  return {
+    name: 'github-pages-spa-fallback',
+    apply: 'build' as const,
+    closeBundle() {
+      if (process.env.GITHUB_PAGES !== 'true') return
+      const dist = fileURLToPath(new URL('./dist', import.meta.url))
+      // GitHub Pages 没有 SPA 回退，深链刷新会落到 404.html
+      copyFileSync(join(dist, 'index.html'), join(dist, '404.html'))
+    },
+  }
+}
+
 export default defineConfig({
+  base: process.env.GITHUB_PAGES === 'true' ? githubPagesBase : '/',
   plugins: [
     vue(),
     UnoCSS(),
     financeCloudPlugin(),
+    githubPagesSpaFallback(),
     AutoImport({
       imports: ['vue', 'vue-router', 'pinia', '@vueuse/core'],
       resolvers: [elementPlusResolver],
