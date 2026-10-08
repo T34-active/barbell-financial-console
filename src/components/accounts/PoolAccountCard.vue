@@ -20,14 +20,17 @@ const props = withDefaults(
     editableYield?: boolean
     /** 是否显示删除 */
     removable?: boolean
+    /** 可转出的其他账户（港币池内） */
+    transferTargets?: PoolAccount[]
   }>(),
-  { editable: false, editableYield: false, removable: false },
+  { editable: false, editableYield: false, removable: false, transferTargets: () => [] },
 )
 
 const emit = defineEmits<{
   saveAmount: [amount: number]
   saveYield: [yieldRate: number]
   remove: []
+  transfer: [payload: { toId: string; amount: number; received?: number }]
 }>()
 
 const { moneyInBase } = useFinanceFormat()
@@ -46,25 +49,33 @@ const typeLabel: Record<PoolAccount['type'], string> = {
   cash: '现金',
   bank: '银行',
   gold: '黄金',
+  fund: '基金',
   crypto_earn: '加密赚币',
 }
 
-/** delta=按增减记一笔；total=直接改总额；pnl=当日收益（可正可负） */
-const amountMode = ref<'delta' | 'total' | 'pnl'>(props.account.type === 'gold' ? 'pnl' : 'delta')
-/** 本次变动金额（正数）；方向由 deltaSign 决定 */
-const draftDelta = ref(0)
-const deltaSign = ref<1 | -1>(1)
 const draftAmount = ref(props.account.amount)
 const draftDailyPnl = ref(0)
 const draftYieldPct = ref(round(mul(props.account.yield_rate ?? 0, 100), 2))
+const transferToId = ref('')
+const transferAmount = ref(0)
+const transferReceived = ref(0)
 
 watch(
   () => props.account.amount,
   (v) => {
     draftAmount.value = v
-    draftDelta.value = 0
     draftDailyPnl.value = 0
   },
+)
+
+watch(
+  () => props.transferTargets,
+  (targets) => {
+    if (!targets.some((item) => item.id === transferToId.value)) {
+      transferToId.value = targets[0]?.id ?? ''
+    }
+  },
+  { immediate: true },
 )
 
 watch(
@@ -74,55 +85,26 @@ watch(
   },
 )
 
-const signedDelta = computed(() => round(mul(draftDelta.value, deltaSign.value), 2))
-
 const previewAmount = computed(() => {
-  if (amountMode.value === 'total') {
-    return round(draftAmount.value, 2)
-  }
-  if (amountMode.value === 'pnl') {
-    return round(add(props.account.amount, draftDailyPnl.value), 2)
-  }
-  return round(add(props.account.amount, signedDelta.value), 2)
+  if (isGold.value) return round(add(props.account.amount, draftDailyPnl.value), 2)
+  return round(draftAmount.value, 2)
 })
 
-const dirtyAmount = computed(() => {
-  if (amountMode.value === 'total') {
-    return Math.abs(sub(draftAmount.value, props.account.amount)) > 1e-9
-  }
-  if (amountMode.value === 'pnl') {
-    return Math.abs(draftDailyPnl.value) > 1e-9
-  }
-  return Math.abs(signedDelta.value) > 1e-9
-})
+const balanceDelta = computed(() => round(sub(previewAmount.value, props.account.amount), 2))
+
+const dirtyAmount = computed(() => Math.abs(balanceDelta.value) > 1e-9)
+
+const transferTarget = computed(
+  () => props.transferTargets.find((item) => item.id === transferToId.value) ?? null,
+)
+const transferCrossCurrency = computed(
+  () => !!transferTarget.value && transferTarget.value.currency !== props.account.currency,
+)
 
 const dirtyYield = computed(() => {
   const current = round(mul(props.account.yield_rate ?? 0, 100), 2)
   return Math.abs(sub(draftYieldPct.value, current)) > 1e-9
 })
-
-const deltaLabel = computed(() => {
-  const d = signedDelta.value
-  if (Math.abs(d) < 1e-9) return '本次无变动'
-  const sign = d > 0 ? '+' : ''
-  return `本次 ${sign}${formatMoney(d, props.account.currency)}`
-})
-
-function setDeltaSign(sign: 1 | -1) {
-  deltaSign.value = sign
-}
-
-function switchAmountMode(mode: 'delta' | 'total' | 'pnl') {
-  amountMode.value = mode
-  if (mode === 'total') {
-    draftAmount.value = props.account.amount
-  } else if (mode === 'pnl') {
-    draftDailyPnl.value = 0
-  } else {
-    draftDelta.value = 0
-    deltaSign.value = 1
-  }
-}
 
 function saveAmount() {
   const next = previewAmount.value
@@ -131,15 +113,42 @@ function saveAmount() {
     return
   }
   emit('saveAmount', next)
-  const delta = round(sub(next, props.account.amount), 2)
+  const delta = balanceDelta.value
   const deltaText =
     Math.abs(delta) < 1e-9
       ? '无变动'
       : `${delta > 0 ? '+' : ''}${formatMoney(delta, props.account.currency)}`
   ElMessage.success(`${props.account.name} 已更新（${deltaText}）`)
-  draftDelta.value = 0
-  deltaSign.value = 1
   draftDailyPnl.value = 0
+}
+
+function submitTransfer() {
+  const target = transferTarget.value
+  if (!target) {
+    ElMessage.warning('请选择转入账户')
+    return
+  }
+  const amount = round(transferAmount.value, 2)
+  if (!(amount > 0)) {
+    ElMessage.warning('转出金额须大于 0')
+    return
+  }
+  if (props.account.amount + 1e-9 < amount) {
+    ElMessage.warning('转出金额超过余额')
+    return
+  }
+  const received = transferCrossCurrency.value ? round(transferReceived.value, 2) : undefined
+  if (transferCrossCurrency.value && !(received! > 0)) {
+    ElMessage.warning('跨币种请填写实际到账金额')
+    return
+  }
+  try {
+    emit('transfer', { toId: target.id, amount, received })
+    transferAmount.value = 0
+    transferReceived.value = 0
+  } catch {
+    /* 父组件已提示失败原因 */
+  }
 }
 
 function saveYield() {
@@ -166,7 +175,7 @@ function saveYield() {
         <span
           class="rounded-md px-2 py-1 text-xs"
           :class="
-            account.type === 'gold' || account.type === 'crypto_earn'
+            account.type === 'gold' || account.type === 'fund' || account.type === 'crypto_earn'
               ? 'bg-accent-soft text-accent'
               : 'bg-surface-tint text-ink-muted'
           "
@@ -204,35 +213,7 @@ function saveYield() {
         </p>
       </div>
 
-      <div class="flex flex-wrap gap-2">
-        <el-button
-          v-if="isGold"
-          size="small"
-          :type="amountMode === 'pnl' ? 'primary' : 'default'"
-          plain
-          @click="switchAmountMode('pnl')"
-        >
-          当日收益
-        </el-button>
-        <el-button
-          size="small"
-          :type="amountMode === 'delta' ? 'primary' : 'default'"
-          plain
-          @click="switchAmountMode('delta')"
-        >
-          存入 / 取出
-        </el-button>
-        <el-button
-          size="small"
-          :type="amountMode === 'total' ? 'primary' : 'default'"
-          plain
-          @click="switchAmountMode('total')"
-        >
-          改总额
-        </el-button>
-      </div>
-
-      <div v-if="amountMode === 'pnl'" class="space-y-2">
+      <div v-if="isGold" class="space-y-2">
         <label class="block text-xs text-ink-muted">
           当日收益（{{ account.currency }}，亏了填负数）
         </label>
@@ -250,54 +231,41 @@ function saveYield() {
         </p>
       </div>
 
-      <div v-else-if="amountMode === 'delta'" class="space-y-2">
-        <div class="flex flex-wrap gap-2">
-          <el-button
-            size="small"
-            :type="deltaSign === 1 ? 'success' : 'default'"
-            @click="setDeltaSign(1)"
-          >
-            存入 +
-          </el-button>
-          <el-button
-            size="small"
-            :type="deltaSign === -1 ? 'danger' : 'default'"
-            @click="setDeltaSign(-1)"
-          >
-            取出 −
-          </el-button>
-        </div>
-        <label class="block text-xs text-ink-muted">本次金额（{{ account.currency }}）</label>
-        <div class="flex flex-wrap items-center gap-2">
-          <AmountInput v-model="draftDelta" :min="0" class="w-44!" />
-          <el-button type="primary" size="small" :disabled="!dirtyAmount" @click="saveAmount">
-            确认变动
-          </el-button>
-        </div>
-        <p class="text-sm" :class="signedDelta >= 0 ? 'text-safe' : 'text-alert'">
-          {{ deltaLabel }}
-          <span class="text-ink-muted">
-            → 余额 {{ formatMoney(previewAmount, account.currency) }}
-          </span>
-        </p>
-      </div>
-
       <div v-else class="space-y-2">
-        <label class="block text-xs text-ink-muted">新总额（{{ account.currency }}）</label>
+        <label class="block text-xs text-ink-muted">账面余额（{{ account.currency }}）</label>
         <div class="flex flex-wrap items-center gap-2">
           <AmountInput v-model="draftAmount" :min="0" class="w-44!" />
           <el-button type="primary" size="small" :disabled="!dirtyAmount" @click="saveAmount">
-            保存总额
+            保存余额
           </el-button>
         </div>
-        <p
-          class="text-sm"
-          :class="sub(previewAmount, account.amount) >= 0 ? 'text-safe' : 'text-alert'"
-        >
+        <p class="text-sm" :class="balanceDelta >= 0 ? 'text-safe' : 'text-alert'">
           相对当前
-          {{ sub(previewAmount, account.amount) >= 0 ? '+' : ''
-          }}{{ formatMoney(sub(previewAmount, account.amount), account.currency) }}
+          {{ balanceDelta >= 0 ? '+' : '' }}{{ formatMoney(balanceDelta, account.currency) }}
         </p>
+      </div>
+
+      <div v-if="transferTargets.length" class="space-y-2 border-t border-surface-line pt-3">
+        <p class="text-xs text-ink-muted">
+          转到池内其他账户。同币种两边一起改；跨币种填银行实际到账。
+        </p>
+        <el-select v-model="transferToId" class="w-full!" placeholder="转入账户">
+          <el-option
+            v-for="target in transferTargets"
+            :key="target.id"
+            :label="`${target.name} · ${target.currency}`"
+            :value="target.id"
+          />
+        </el-select>
+        <div class="flex flex-wrap items-center gap-2">
+          <AmountInput v-model="transferAmount" :min="0" class="w-44!" />
+          <span class="text-xs text-ink-muted">{{ account.currency }}</span>
+        </div>
+        <div v-if="transferCrossCurrency" class="flex flex-wrap items-center gap-2">
+          <AmountInput v-model="transferReceived" :min="0" class="w-44!" />
+          <span class="text-xs text-ink-muted">到账 {{ transferTarget?.currency }}</span>
+        </div>
+        <el-button type="primary" size="small" plain @click="submitTransfer">确认转出</el-button>
       </div>
 
       <p v-if="account.amount_updated_at" class="text-[11px] text-ink-muted">

@@ -17,6 +17,7 @@ import type {
 } from '@/types/finance'
 import { createId } from '@/utils/salary-allocation'
 import { add, div, mul, round, sub } from '@/utils/decimal'
+import { isNavFundAccount } from '@/utils/fund-nav'
 import { mergeFunFundCharges } from '@/utils/fun-fund-charge'
 
 /** 深拷贝纯数据；兼容 Vue Proxy（structuredClone 无法克隆 Proxy） */
@@ -36,7 +37,7 @@ export function normalizeSettings(raw: AppSettings | undefined): AppSettings {
   ]
   // 旧数据把 HTX 放在 neutral：迁到 crypto_assets
   neutral = neutral.filter((id) => id !== 'htx_earn_usdt' && id !== 'okx_earn_usdt')
-  if (!neutral.includes('gold_etf')) neutral.push('gold_etf')
+  // gold_etf 是否留在中性端，由 alignNeutralFundClassification 按账户是否存在决定
 
   const cryptoAssets = [
     ...(raw.asset_classification?.crypto_assets ?? seed.asset_classification.crypto_assets),
@@ -101,26 +102,26 @@ export function normalizeAccounts(raw: AccountsState | undefined): AccountsState
       yulibao.yield_rate = 0.015
     }
   }
-  const gold = rmb.find((item) => item.id === 'gold_etf')
-  if (gold) {
-    if (!(gold.shares! > 0) || !(gold.cost_amount! > 0)) {
-      const lots = gold.fund_lots ?? []
-      gold.shares = round(
+  for (const fund of rmb) {
+    if (!isNavFundAccount(fund)) continue
+    if (!(fund.shares! > 0) || !(fund.cost_amount! > 0)) {
+      const lots = fund.fund_lots ?? []
+      fund.shares = round(
         lots.reduce((sum, lot) => add(sum, lot.shares), 0),
         4,
       )
-      gold.cost_amount = round(
+      fund.cost_amount = round(
         lots.reduce((sum, lot) => add(sum, lot.amount), 0),
         2,
       )
     }
-    const nav = gold.nav
-    const shares = gold.shares
-    const costAmount = gold.cost_amount
+    const nav = fund.nav
+    const shares = fund.shares
+    const costAmount = fund.cost_amount
     if (nav != null && nav > 0 && shares != null && shares > 0) {
-      gold.amount = round(mul(shares, nav), 2)
+      fund.amount = round(mul(shares, nav), 2)
       if (costAmount != null && costAmount > 0) {
-        gold.profit_rate = round(div(sub(gold.amount, costAmount), costAmount), 4)
+        fund.profit_rate = round(div(sub(fund.amount, costAmount), costAmount), 4)
       }
     }
   }
@@ -131,6 +132,22 @@ export function normalizeAccounts(raw: AccountsState | undefined): AccountsState
     us_stock_pool: raw.us_stock_pool ?? seed.us_stock_pool,
     crypto_pool: crypto,
   }
+}
+
+/** 净值基金只进中性端；黄金账户已删除时不再把 gold_etf 补回去 */
+export function alignNeutralFundClassification(settings: AppSettings, accounts: AccountsState) {
+  const fundIds = accounts.rmb_pool.filter((item) => isNavFundAccount(item)).map((item) => item.id)
+  const fundSet = new Set(fundIds)
+  const neutral = settings.asset_classification.neutral_assets.filter(
+    (id) => id !== 'gold_etf' || fundSet.has('gold_etf'),
+  )
+  for (const id of fundIds) {
+    if (!neutral.includes(id)) neutral.push(id)
+  }
+  settings.asset_classification.neutral_assets = neutral
+  settings.asset_classification.safe_assets = settings.asset_classification.safe_assets.filter(
+    (id) => !fundSet.has(id),
+  )
 }
 
 export function yuanGouOutcomeOf(item: YuanGouRecord): YuanGouOutcome {

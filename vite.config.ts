@@ -51,6 +51,12 @@ const apiProxies: Record<string, ProxyOptions> = {
     'https://api.fund.eastmoney.com',
     'https://fundf10.eastmoney.com/',
   ),
+  // 天天基金代码检索：添加基金时核对代码并带回官方简称
+  '/api/fund-suggest': apiProxy(
+    '/api/fund-suggest',
+    'https://fundsuggest.eastmoney.com',
+    'https://fund.eastmoney.com/',
+  ),
 }
 
 const elementPlusResolver = ElementPlusResolver({ importStyle: 'css' })

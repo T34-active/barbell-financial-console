@@ -3,7 +3,12 @@
  * 浏览器直连有 CORS，开发/预览走 Vite 代理 `/api/fund-eastmoney`。
  */
 
-import type { FundLot } from '@/types/finance'
+import type { FundLot, PoolAccount } from '@/types/finance'
+
+/** 按净值记账的公募基金（含已有黄金账户） */
+export function isNavFundAccount(account: Pick<PoolAccount, 'type' | 'fund_code'>): boolean {
+  return account.type === 'gold' || account.type === 'fund' || Boolean(account.fund_code?.trim())
+}
 import { add, div, mul, round, sub } from '@/utils/decimal'
 
 export interface FundNavQuote {
@@ -162,4 +167,73 @@ export async function fetchFundLatestNav(fundCode: string): Promise<FundNavQuote
   const latest = quotes[0]
   if (!latest) throw new Error(`${fundCode.trim()}: 未返回有效净值`)
   return latest
+}
+
+function fundSuggestBaseUrl() {
+  return '/api/fund-suggest'
+}
+
+/** 天天基金检索命中的公募产品 */
+export interface FundProfile {
+  fund_code: string
+  name: string
+  fund_type?: string
+  company?: string
+}
+
+interface FundSearchHit {
+  CODE?: string
+  NAME?: string
+  FundBaseInfo?: {
+    FCODE?: string
+    SHORTNAME?: string
+    FTYPE?: string
+    JJGS?: string
+  } | null
+}
+
+interface FundSearchResponse {
+  Datas?: FundSearchHit[]
+}
+
+/**
+ * 按 6 位代码联网核对公募基金。
+ * 检索是模糊匹配，必须 CODE 与 FundBaseInfo.FCODE 都等于输入，否则视为无效代码。
+ */
+export async function lookupFund(fundCode: string): Promise<FundProfile> {
+  const code = fundCode.trim()
+  if (!/^\d{6}$/.test(code)) {
+    throw new Error('基金代码须为 6 位数字')
+  }
+
+  const url =
+    `${fundSuggestBaseUrl()}/FundSearch/api/FundSearchAPI.ashx` +
+    `?m=1&key=${encodeURIComponent(code)}`
+
+  let json: FundSearchResponse
+  try {
+    const res = await fetch(url, {
+      cache: 'no-store',
+      headers: { Accept: 'application/json,*/*' },
+    })
+    if (!res.ok) throw new Error(`基金查询失败 (${res.status})`)
+    json = (await res.json()) as FundSearchResponse
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('基金查询失败')) throw error
+    const msg = error instanceof Error ? error.message : String(error)
+    throw new Error(`基金查询失败: ${msg}`)
+  }
+
+  const hit = (json.Datas ?? []).find(
+    (item) => item.CODE === code && item.FundBaseInfo?.FCODE === code,
+  )
+  const name = (hit?.FundBaseInfo?.SHORTNAME || hit?.NAME || '').trim()
+  if (!hit || !name) throw new Error(`未找到基金 ${code}，请核对代码`)
+
+  return {
+    fund_code: code,
+    name,
+    fund_type: hit.FundBaseInfo?.FTYPE?.trim() || undefined,
+    company: hit.FundBaseInfo?.JJGS?.trim() || undefined,
+  }
 }

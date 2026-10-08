@@ -2,7 +2,7 @@
 export type BaseCurrency = 'HKD' | 'CNY' | 'USD' | 'USDT' | 'SGD'
 
 /** 账户资产类型 */
-export type AccountAssetType = 'cash' | 'gold' | 'bank' | 'crypto_earn'
+export type AccountAssetType = 'cash' | 'gold' | 'bank' | 'crypto_earn' | 'fund'
 
 /** 公募基金加仓明细（按确认日） */
 export interface FundLot {

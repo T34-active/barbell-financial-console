@@ -17,7 +17,7 @@ onMounted(() => {
     }
     cloudAuto.resume()
     await store.ensureDailyFxRates()
-    await store.ensureDailyGoldFundNav()
+    await store.ensureDailyFundNav()
   })()
 })
 </script>

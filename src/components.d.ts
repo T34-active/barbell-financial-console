@@ -32,6 +32,7 @@ declare module 'vue' {
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
     FearGreedMeter: typeof import('./components/summary/FearGreedMeter.vue')['default']
     FormulaTooltip: typeof import('./components/accounts/FormulaTooltip.vue')['default']
+    FundProductPanel: typeof import('./components/accounts/FundProductPanel.vue')['default']
     FunFundPocket: typeof import('./components/salary/FunFundPocket.vue')['default']
     GlobalFxBar: typeof import('./components/fx/GlobalFxBar.vue')['default']
     HtxDailyYieldDialog: typeof import('./components/accounts/HtxDailyYieldDialog.vue')['default']

@@ -8,6 +8,7 @@ import type {
   UsStockHolding,
 } from '@/types/finance'
 import { stockCostBasis, stockMarketValue } from '@/utils/currency'
+import { isNavFundAccount } from '@/utils/fund-nav'
 import { add, div, mul, sub } from '@/utils/decimal'
 import type { FinanceRefs } from './state'
 
@@ -189,7 +190,7 @@ export function createValuation(
     }
 
     const cashYield = accounts.value.rmb_pool.reduce((sum, item) => {
-      if (item.id === 'gold_etf') return sum
+      if (isNavFundAccount(item)) return sum
       return add(sum, pushCash(item))
     }, 0)
 
