@@ -2,6 +2,8 @@
 
 跨币种（CNY / HKD / USD）、多账户个人资产控制台，遵循塔勒布哑铃策略（Barbell Strategy）。
 
+在线预览：<https://t34-active.github.io/barbell-financial-console/>
+
 ## 技术栈
 
 - Vue 3 + TypeScript + Vite
@@ -23,6 +25,21 @@ npm run dev
 npm run build
 npm run preview
 ```
+
+本地构建的资源前缀是 `/`。要复现线上包，先设置 `GITHUB_PAGES=true` 再构建，产物会挂在 `/barbell-financial-console/` 下，并带一份 `404.html` 供子页面刷新。
+
+## GitHub Pages
+
+推送到 `main` 后，[`.github/workflows/pages.yml`](.github/workflows/pages.yml) 会执行 `npm ci` 与 `npm run build`（`GITHUB_PAGES=true`），把 `dist` 发到：
+
+<https://t34-active.github.io/barbell-financial-console/>
+
+Pages 只托管静态文件。
+
+- 打开后是空种子；账本写在这台浏览器的 LocalStorage，清站点数据会丢
+- `public/pbfc-finance/` 在 `.gitignore` 里，本机账本不会出现在线上
+- 新浪行情、东财净值、天天基金检索、CNN 恐贪走 Vite 开发代理，静态站没有这层代理，刷新行情会失败
+- 改了依赖要一并提交 `package-lock.json`，否则 Actions 里的 `npm ci` 会失败
 
 ## 目录结构
 
