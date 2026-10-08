@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import type { ServerResponse } from 'node:http'
 import path from 'node:path'
 import type { Connect, Plugin, PreviewServer, ViteDevServer } from 'vite'
 
@@ -37,7 +38,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
-function sendJson(res: Connect.ServerResponse, status: number, body: unknown) {
+function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status
   res.setHeader('Content-Type', 'application/json;charset=utf-8')
   res.end(JSON.stringify(body))
