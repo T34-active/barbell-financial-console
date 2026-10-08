@@ -1,0 +1,358 @@
+:root {
+  --ink: #121820;
+  --ink-soft: #243040;
+  --ink-muted: #5b6b7c;
+  --surface: #f4f5f7;
+  --surface-raised: #ffffff;
+  --surface-line: #dde2e8;
+  --surface-tint: #eaedf1;
+  --safe: #0f766e;
+  --safe-soft: #d7f0ed;
+  --risk: #b45309;
+  --risk-soft: #f7e8d6;
+  --alert: #b42318;
+  --alert-soft: #fde8e6;
+  --accent: #2f6fed;
+  --accent-soft: #dce8ff;
+  --quote-red: #dc2626;
+  --quote-red-soft: #fee2e2;
+  --quote-green: #15803d;
+  --quote-green-soft: #dcfce7;
+  --up: var(--quote-red);
+  --up-soft: var(--quote-red-soft);
+  --down: var(--quote-green);
+  --down-soft: var(--quote-green-soft);
+  --radius: 8px;
+  color-scheme: light;
+}
+
+html.dark {
+  --ink: #e8eef4;
+  --ink-soft: #c5d0dc;
+  --ink-muted: #8b9aab;
+  --surface: #0f1419;
+  --surface-raised: #1a222d;
+  --surface-line: #2c3644;
+  --surface-tint: #243040;
+  --safe: #2dd4bf;
+  --safe-soft: rgba(45, 212, 191, 0.14);
+  --risk: #fbbf24;
+  --risk-soft: rgba(251, 191, 36, 0.14);
+  --alert: #f87171;
+  --alert-soft: rgba(248, 113, 113, 0.14);
+  --accent: #6b9cff;
+  --accent-soft: rgba(107, 156, 255, 0.16);
+  --quote-red: #f87171;
+  --quote-red-soft: rgba(248, 113, 113, 0.16);
+  --quote-green: #4ade80;
+  --quote-green-soft: rgba(74, 222, 128, 0.16);
+  color-scheme: dark;
+}
+
+html[data-quote-color='us'] {
+  --up: var(--quote-green);
+  --up-soft: var(--quote-green-soft);
+  --down: var(--quote-red);
+  --down-soft: var(--quote-red-soft);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--surface);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+dl,
+dd {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* 原生 button 默认浅灰底，暗色下会穿帮 */
+button {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+/* Uno / Carbon 图标跟随文字色 */
+[class^='i-'],
+[class*=' i-'] {
+  color: inherit;
+  background-color: currentColor !important;
+}
+
+/* Element Plus：把组件色板接到全局 CSS 变量，保证按钮/输入框/表格跟黑夜模式 */
+html.dark {
+  --el-color-primary: var(--accent);
+  --el-color-success: var(--safe);
+  --el-color-warning: var(--risk);
+  --el-color-danger: var(--alert);
+  --el-color-info: var(--ink-muted);
+
+  --el-bg-color: var(--surface-raised);
+  --el-bg-color-page: var(--surface);
+  --el-bg-color-overlay: var(--surface-raised);
+
+  --el-text-color-primary: var(--ink);
+  --el-text-color-regular: var(--ink-soft);
+  --el-text-color-secondary: var(--ink-muted);
+  --el-text-color-placeholder: var(--ink-muted);
+  --el-text-color-disabled: #5a6878;
+
+  --el-border-color: var(--surface-line);
+  --el-border-color-light: var(--surface-line);
+  --el-border-color-lighter: var(--surface-tint);
+  --el-border-color-extra-light: var(--surface-tint);
+  --el-border-color-dark: var(--ink-muted);
+  --el-border-color-darker: var(--ink-soft);
+
+  --el-fill-color: var(--surface-tint);
+  --el-fill-color-light: var(--surface-tint);
+  --el-fill-color-lighter: var(--surface);
+  --el-fill-color-extra-light: var(--surface);
+  --el-fill-color-blank: var(--surface-raised);
+  --el-fill-color-dark: #2c3644;
+  --el-fill-color-darker: #364354;
+
+  --el-mask-color: rgba(0, 0, 0, 0.55);
+  --el-box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --el-box-shadow-light: 0 4px 12px rgba(0, 0, 0, 0.28);
+  --el-box-shadow-lighter: 0 2px 8px rgba(0, 0, 0, 0.22);
+}
+
+html.dark .el-button {
+  --el-button-bg-color: var(--surface-tint);
+  --el-button-text-color: var(--ink);
+  --el-button-border-color: var(--surface-line);
+  --el-button-hover-bg-color: var(--surface-line);
+  --el-button-hover-text-color: var(--ink);
+  --el-button-hover-border-color: var(--ink-muted);
+  --el-button-active-bg-color: var(--surface-line);
+  --el-button-active-border-color: var(--ink-muted);
+  --el-button-disabled-bg-color: var(--surface);
+  --el-button-disabled-text-color: var(--ink-muted);
+  --el-button-disabled-border-color: var(--surface-line);
+}
+
+html.dark .el-button--primary {
+  --el-button-bg-color: var(--accent);
+  --el-button-text-color: #0f1419;
+  --el-button-border-color: var(--accent);
+  --el-button-hover-bg-color: #8bb0ff;
+  --el-button-hover-text-color: #0f1419;
+  --el-button-hover-border-color: #8bb0ff;
+  --el-button-active-bg-color: #5a8ef0;
+  --el-button-active-border-color: #5a8ef0;
+}
+
+html.dark .el-button--warning {
+  --el-button-bg-color: var(--risk);
+  --el-button-text-color: #0f1419;
+  --el-button-border-color: var(--risk);
+  --el-button-hover-bg-color: #fcd34d;
+  --el-button-hover-text-color: #0f1419;
+  --el-button-hover-border-color: #fcd34d;
+}
+
+html.dark .el-button--danger {
+  --el-button-bg-color: var(--alert);
+  --el-button-text-color: #0f1419;
+  --el-button-border-color: var(--alert);
+  --el-button-hover-bg-color: #fca5a5;
+  --el-button-hover-text-color: #0f1419;
+  --el-button-hover-border-color: #fca5a5;
+}
+
+html.dark .el-button.is-plain,
+html.dark .el-button.is-text,
+html.dark .el-button.is-link {
+  --el-button-bg-color: transparent;
+  --el-button-text-color: var(--ink);
+  --el-button-border-color: var(--surface-line);
+  --el-button-hover-bg-color: var(--surface-tint);
+  --el-button-hover-text-color: var(--ink);
+}
+
+html.dark .el-button--primary.is-plain,
+html.dark .el-button--primary.is-text,
+html.dark .el-button--primary.is-link {
+  --el-button-text-color: var(--accent);
+  --el-button-border-color: var(--accent);
+  --el-button-hover-text-color: #8bb0ff;
+  --el-button-hover-bg-color: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+html.dark .el-button--warning.is-plain,
+html.dark .el-button--warning.is-text,
+html.dark .el-button--warning.is-link {
+  --el-button-text-color: var(--risk);
+  --el-button-border-color: var(--risk);
+  --el-button-hover-text-color: #fcd34d;
+  --el-button-hover-bg-color: color-mix(in srgb, var(--risk) 16%, transparent);
+}
+
+html.dark .el-button--danger.is-plain,
+html.dark .el-button--danger.is-text,
+html.dark .el-button--danger.is-link {
+  --el-button-text-color: var(--alert);
+  --el-button-border-color: var(--alert);
+  --el-button-hover-text-color: #fca5a5;
+  --el-button-hover-bg-color: color-mix(in srgb, var(--alert) 16%, transparent);
+}
+
+html.dark .el-button--success.is-plain,
+html.dark .el-button--success.is-text,
+html.dark .el-button--success.is-link {
+  --el-button-text-color: var(--safe);
+  --el-button-border-color: var(--safe);
+  --el-button-hover-text-color: #86efac;
+  --el-button-hover-bg-color: color-mix(in srgb, var(--safe) 16%, transparent);
+}
+
+html.dark .el-input__wrapper,
+html.dark .el-textarea__inner,
+html.dark .el-input-number,
+html.dark .el-select__wrapper {
+  background-color: var(--surface-raised) !important;
+  box-shadow: 0 0 0 1px var(--surface-line) inset !important;
+}
+
+html.dark .el-input__inner,
+html.dark .el-input-number__decrease,
+html.dark .el-input-number__increase {
+  color: var(--ink) !important;
+  background: transparent !important;
+}
+
+html.dark .el-input-number__decrease,
+html.dark .el-input-number__increase {
+  border-color: var(--surface-line) !important;
+  color: var(--ink-muted) !important;
+}
+
+html.dark .el-radio-button__inner,
+html.dark .el-checkbox__inner {
+  background-color: var(--surface-raised) !important;
+  border-color: var(--surface-line) !important;
+  color: var(--ink) !important;
+}
+
+html.dark .el-radio-button__original-radio:checked + .el-radio-button__inner {
+  background-color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #0f1419 !important;
+  box-shadow: none !important;
+}
+
+html.dark .el-table,
+html.dark .el-table__expanded-cell {
+  --el-table-bg-color: var(--surface-raised);
+  --el-table-tr-bg-color: var(--surface-raised);
+  --el-table-header-bg-color: var(--surface-tint);
+  --el-table-row-hover-bg-color: var(--surface-tint);
+  --el-table-border-color: var(--surface-line);
+  --el-table-text-color: var(--ink);
+  --el-table-header-text-color: var(--ink-muted);
+  --el-table-fixed-box-shadow: 0 0 10px rgba(0, 0, 0, 0.45);
+  --el-table-fixed-left-column: inset 10px 0 10px -10px rgba(0, 0, 0, 0.45);
+  --el-table-fixed-right-column: inset -10px 0 10px -10px rgba(0, 0, 0, 0.45);
+  background-color: var(--surface-raised) !important;
+  color: var(--ink) !important;
+}
+
+html.dark .el-table th.el-table__cell,
+html.dark .el-table tr,
+html.dark .el-table td.el-table__cell {
+  background-color: transparent !important;
+}
+
+/* 固定列叠在滚动内容之上，必须用不透明底，否则会透出后面的字 */
+html.dark .el-table .el-table__cell.el-table-fixed-column--left,
+html.dark .el-table .el-table__cell.el-table-fixed-column--right,
+html.dark .el-table__fixed,
+html.dark .el-table__fixed-right,
+html.dark .el-table__fixed-right-patch,
+html.dark .el-table__fixed th.el-table__cell,
+html.dark .el-table__fixed-right th.el-table__cell,
+html.dark .el-table__fixed td.el-table__cell,
+html.dark .el-table__fixed-right td.el-table__cell {
+  background-color: var(--el-table-bg-color) !important;
+}
+
+html.dark .el-dialog,
+html.dark .el-message-box {
+  --el-dialog-bg-color: var(--surface-raised);
+  --el-messagebox-title-color: var(--ink);
+  background-color: var(--surface-raised) !important;
+}
+
+html.dark .el-dialog__title,
+html.dark .el-message-box__title,
+html.dark .el-message-box__content {
+  color: var(--ink) !important;
+}
+
+html.dark .el-checkbox__label,
+html.dark .el-form-item__label,
+html.dark .el-date-editor .el-input__inner {
+  color: var(--ink) !important;
+}
+
+html.dark .el-picker-panel,
+html.dark .el-date-picker,
+html.dark .el-popper.is-light {
+  background: var(--surface-raised) !important;
+  border-color: var(--surface-line) !important;
+  color: var(--ink) !important;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

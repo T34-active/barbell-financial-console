@@ -1,0 +1,28 @@
+{
+  "settings": {
+    "currency": "CNY",
+    "ratios": {
+      "parents": 0.3,
+      "safety_pad": 0.25,
+      "us_seed": 0.35,
+      "fun_fund": 0.1,
+      "travel_fund": 0
+    },
+    "safety_pad_target": 20000,
+    "us_seed_remit_months": 3,
+    "fun_fund_charges": []
+  },
+  "buckets": {
+    "emergency_reserve": 0,
+    "us_seed_parking": 0,
+    "cash_observation": 0,
+    "fun_fund_pocket": 0,
+    "travel_fund_pocket": 0
+  },
+  "history": [],
+  "extra_income_history": [],
+  "remit_history": [],
+  "carryover_history": [],
+  "fun_fund_charge_history": [],
+  "last_remit_at": null
+}

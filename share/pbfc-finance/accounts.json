@@ -1,0 +1,82 @@
+{
+  "rmb_pool": [
+    {
+      "id": "yulibao",
+      "name": "余利宝",
+      "type": "cash",
+      "amount": 0,
+      "currency": "CNY",
+      "yield_rate": 0.015
+    },
+    {
+      "id": "cash_rmb",
+      "name": "手头现金",
+      "type": "cash",
+      "amount": 0,
+      "currency": "CNY"
+    },
+    {
+      "id": "gold_etf",
+      "name": "博时黄金ETF联接C",
+      "type": "gold",
+      "amount": 0,
+      "currency": "CNY",
+      "fund_code": "002611",
+      "shares": 0,
+      "cost_amount": 0,
+      "fund_lots": []
+    }
+  ],
+  "hkd_pool": [
+    {
+      "id": "hsbc",
+      "name": "汇丰银行",
+      "type": "bank",
+      "amount": 0,
+      "currency": "HKD",
+      "is_safety_line": true
+    },
+    {
+      "id": "zabank",
+      "name": "众安银行",
+      "type": "bank",
+      "amount": 0,
+      "currency": "HKD",
+      "yield_rate": 0.003
+    },
+    {
+      "id": "boc",
+      "name": "中银香港",
+      "type": "bank",
+      "amount": 0,
+      "currency": "HKD"
+    },
+    {
+      "id": "starryblu",
+      "name": "starryblu",
+      "type": "bank",
+      "amount": 0,
+      "currency": "SGD",
+      "yield_rate": 0.0036
+    }
+  ],
+  "us_stock_pool": [],
+  "crypto_pool": [
+    {
+      "id": "htx_earn_usdt",
+      "name": "HTX 赚币 USDT",
+      "type": "crypto_earn",
+      "amount": 0,
+      "currency": "USDT",
+      "yield_rate": 0.1
+    },
+    {
+      "id": "okx_earn_usdt",
+      "name": "OKX 活期 USDT",
+      "type": "crypto_earn",
+      "amount": 0,
+      "currency": "USDT",
+      "yield_rate": 0.0224
+    }
+  ]
+}

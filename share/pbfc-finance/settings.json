@@ -1,0 +1,36 @@
+{
+  "base_currency": "HKD",
+  "hsbc_safety_line": 10000,
+  "fx_to_hkd": {
+    "HKD": 1,
+    "CNY": 1.08,
+    "USD": 7.8,
+    "USDT": 7.8,
+    "SGD": 6.1843
+  },
+  "fx_live": null,
+  "asset_classification": {
+    "safe_assets": ["hsbc", "zabank", "boc", "starryblu", "yulibao", "cash_rmb"],
+    "offensive_assets": ["qqq", "ko", "schd"],
+    "neutral_assets": ["gold_etf"],
+    "crypto_assets": ["htx_earn_usdt", "okx_earn_usdt"]
+  },
+  "rules": {
+    "safety_cap": 20000,
+    "carryover_rule": "split_50_50",
+    "pe_guard_enabled": true,
+    "nasdaq_pe_threshold": 30,
+    "nasdaq_pe_current": 28,
+    "avg_pivot": 25,
+    "fear_greed_index": 50,
+    "fear_greed_rating": "neutral",
+    "payday_day": 10,
+    "payday_postpone_weekend": true,
+    "htx_high_yield_threshold": 200,
+    "htx_high_yield_rate": 0.1,
+    "htx_low_yield_rate": 0.015,
+    "htx_target_balance": 199,
+    "htx_overflow_min_transfer": 2,
+    "okx_yield_rate": 0.0224
+  }
+}
