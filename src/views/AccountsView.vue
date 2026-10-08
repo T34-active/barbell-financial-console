@@ -2,6 +2,7 @@
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PoolAccountCard from '@/components/accounts/PoolAccountCard.vue'
+import FundProductPanel from '@/components/accounts/FundProductPanel.vue'
 import StockHoldingCard from '@/components/accounts/StockHoldingCard.vue'
 import FormulaTooltip from '@/components/accounts/FormulaTooltip.vue'
 import LoanPanel from '@/components/accounts/LoanPanel.vue'
@@ -9,19 +10,10 @@ import YuanGouPanel from '@/components/accounts/YuanGouPanel.vue'
 import { useFinanceStore } from '@/stores/finance'
 import { useFinanceFormat } from '@/composables/useFinanceFormat'
 import { quoteToneClass } from '@/composables/useQuoteColor'
-import {
-  formatMoney,
-  formatPercent,
-  fundCostBasis,
-  fundMarketValue,
-  fundPnl,
-  stockCostBasis,
-  stockMarketValue,
-} from '@/utils/currency'
-import { add, div, mul, round, sub } from '@/utils/decimal'
-import { isFutureBeijingDate, todayBeijingDate, formatMonthDay } from '@/utils/datetime'
-import { derivePrevNav, lotDailyPnl } from '@/utils/fund-nav'
-import type { FundLot, PoolAccount, UsStockHolding } from '@/types/finance'
+import { formatMoney, formatPercent, stockCostBasis, stockMarketValue } from '@/utils/currency'
+import { add, div, round, sub } from '@/utils/decimal'
+import { isNavFundAccount, lookupFund, type FundProfile } from '@/utils/fund-nav'
+import type { PoolAccount, UsStockHolding } from '@/types/finance'
 
 const store = useFinanceStore()
 const { money, moneyInBase } = useFinanceFormat()
@@ -33,15 +25,21 @@ const safeRmb = computed(() =>
     (a) => !store.settings.asset_classification.neutral_assets.includes(a.id),
   ),
 )
-const goldNeutral = computed(() => {
+const fundProducts = computed(() => {
   const ids = new Set(store.settings.asset_classification.neutral_assets)
-  return store.accounts.rmb_pool.filter((a) => ids.has(a.id))
+  return store.accounts.rmb_pool.filter((a) => ids.has(a.id) && isNavFundAccount(a))
+})
+const otherNeutral = computed(() => {
+  const ids = new Set(store.settings.asset_classification.neutral_assets)
+  return store.accounts.rmb_pool.filter((a) => ids.has(a.id) && !isNavFundAccount(a))
 })
 const cryptoAssets = computed(() => {
   const ids = new Set(store.settings.asset_classification.crypto_assets ?? [])
   return store.accounts.crypto_pool.filter((a) => ids.has(a.id))
 })
-const neutralAssets = computed(() => [...goldNeutral.value, ...cryptoAssets.value] as PoolAccount[])
+const neutralAssets = computed(
+  () => [...fundProducts.value, ...otherNeutral.value, ...cryptoAssets.value] as PoolAccount[],
+)
 const neutralValue = computed(() =>
   neutralAssets.value.reduce((sum, item) => add(sum, store.toBase(item.amount, item.currency)), 0),
 )
@@ -78,19 +76,18 @@ const tabs = computed(() => [
 ])
 
 const quoteRefreshing = ref(false)
-const goldNavRefreshing = ref(false)
-const goldTradeMode = ref<'buy' | 'sell'>('buy')
-const goldBuyForm = ref({
-  amount: 100,
-  confirmNav: 0,
-  confirmDate: todayBeijingDate(),
-  note: '',
+const addFundVisible = ref(false)
+const fundForm = ref({
+  name: '',
+  fundCode: '',
 })
-const goldSellForm = ref({
-  shares: 0,
-  redeemNav: 0,
-  note: '',
-})
+const fundLookup = ref<FundProfile | null>(null)
+const fundLookupError = ref('')
+const fundLookingUp = ref(false)
+const fundSaving = ref(false)
+/** 最近一次查询自动填入的名称；用户没改过就随新结果替换 */
+const fundNameFromLookup = ref('')
+let fundLookupSeq = 0
 const editDialogVisible = ref(false)
 const editingStock = ref<UsStockHolding | null>(null)
 const editShares = ref(0)
@@ -132,117 +129,6 @@ const usHoldingPnl = computed(() => {
     rate: cost > 0 ? div(pnl, cost) : 0,
   }
 })
-
-const goldAccount = computed(() => store.accounts.rmb_pool.find((a) => a.id === 'gold_etf') ?? null)
-
-const goldLots = computed<FundLot[]>(() => goldAccount.value?.fund_lots ?? [])
-
-const goldSummary = computed(() => {
-  const account = goldAccount.value
-  if (!account) {
-    return {
-      cost: 0,
-      market: 0,
-      pnl: 0,
-      rate: 0,
-      nav: 0,
-      costNav: 0,
-      shares: 0,
-      asOf: '',
-    }
-  }
-  const { pnl, rate } = fundPnl(account)
-  const cost = fundCostBasis(account)
-  const shares = account.shares ?? 0
-  return {
-    cost,
-    market: fundMarketValue(account),
-    pnl,
-    rate,
-    nav: account.nav ?? 0,
-    costNav: shares > 0 && cost > 0 ? round(div(cost, shares), 4) : 0,
-    shares,
-    asOf: account.nav_updated_at?.slice(0, 10) ?? '',
-  }
-})
-
-const goldDaily = computed(() => {
-  const account = goldAccount.value
-  const nav = account?.nav ?? 0
-  const asOf = (account?.nav_updated_at ?? '').slice(0, 10)
-  const storedPrev = account?.prev_nav ?? 0
-  const prevNav = storedPrev > 0 ? storedPrev : derivePrevNav(nav, account?.nav_day_change)
-  const dayChange =
-    account?.nav_day_change ?? (prevNav > 0 && nav > 0 ? div(sub(nav, prevNav), prevNav) : 0)
-  const lots = goldLots.value
-  const pnl = lots.length
-    ? round(
-        lots.reduce((sum, lot) => add(sum, lotDailyPnl(lot, nav, prevNav, asOf)), 0),
-        2,
-      )
-    : prevNav > 0
-      ? round(mul(account?.shares ?? 0, sub(nav, prevNav)), 2)
-      : 0
-  return {
-    prevNav,
-    dayChange,
-    pnl,
-    asOf,
-    available: prevNav > 0 && nav > 0,
-  }
-})
-
-const goldSharesText = computed(() =>
-  goldSummary.value.shares ? goldSummary.value.shares.toFixed(4) : '—',
-)
-const goldNavText = computed(() => (goldSummary.value.nav ? goldSummary.value.nav.toFixed(4) : '—'))
-const goldPrevNavText = computed(() =>
-  goldDaily.value.available ? goldDaily.value.prevNav.toFixed(4) : '—',
-)
-const goldCostNavText = computed(() =>
-  goldSummary.value.costNav ? goldSummary.value.costNav.toFixed(4) : '—',
-)
-
-function lotTodayPnl(lot: FundLot) {
-  return lotDailyPnl(lot, goldSummary.value.nav, goldDaily.value.prevNav, goldDaily.value.asOf)
-}
-
-const goldDailyLog = computed(() => goldAccount.value?.daily_pnl ?? [])
-
-const goldDailyPage = ref(1)
-const goldDailyPageSize = ref(10)
-
-const goldDailyPageRows = computed(() => {
-  const start = (goldDailyPage.value - 1) * goldDailyPageSize.value
-  return goldDailyLog.value.slice(start, start + goldDailyPageSize.value)
-})
-
-const goldDailyLogSum = computed(() =>
-  round(
-    goldDailyLog.value.reduce((sum, row) => add(sum, row.pnl), 0),
-    2,
-  ),
-)
-
-watch([() => goldDailyLog.value.length, goldDailyPageSize], () => {
-  const maxPage = Math.max(1, Math.ceil(goldDailyLog.value.length / goldDailyPageSize.value) || 1)
-  if (goldDailyPage.value > maxPage) goldDailyPage.value = maxPage
-})
-
-function lotMarketValue(lot: FundLot) {
-  const nav = goldAccount.value?.nav
-  if (!(nav! > 0)) return 0
-  return round(mul(lot.shares, nav!), 2)
-}
-
-function lotPnl(lot: FundLot) {
-  return sub(lotMarketValue(lot), lot.amount)
-}
-
-function lotPnlRate(lot: FundLot) {
-  if (!(lot.amount > 0)) return 0
-  return div(lotPnl(lot), lot.amount)
-}
 
 function slugifyId(raw: string) {
   return raw
@@ -377,99 +263,98 @@ async function refreshQuotes() {
   }
 }
 
-async function refreshGoldNav() {
-  goldNavRefreshing.value = true
-  try {
-    const result = await store.refreshGoldFundNav()
-    const sign = result.pnl >= 0 ? '+' : ''
-    const dailySign = goldDaily.value.pnl >= 0 ? '+' : ''
-    const dailyText = goldDaily.value.available
-      ? ` · 今日盈亏 ${dailySign}${formatMoney(goldDaily.value.pnl, 'CNY')}（${formatPercent(goldDaily.value.dayChange)}）`
-      : ''
-    ElMessage.success(
-      `净值 ${result.nav}（${result.as_of}）· 市值 ${formatMoney(result.amount, 'CNY')}${dailyText} · 浮${result.pnl >= 0 ? '盈' : '亏'} ${sign}${formatMoney(result.pnl, 'CNY')}（${formatPercent(result.profit_rate)}）`,
-    )
-    if (!(goldBuyForm.value.confirmNav > 0)) {
-      goldBuyForm.value.confirmNav = result.nav
-    }
-    if (!(goldSellForm.value.redeemNav > 0)) {
-      goldSellForm.value.redeemNav = result.nav
-    }
-  } catch (error) {
-    if (error instanceof Error) ElMessage.error(error.message)
-  } finally {
-    goldNavRefreshing.value = false
+function resetFundLookup() {
+  fundLookupSeq += 1
+  fundLookup.value = null
+  fundLookupError.value = ''
+  fundLookingUp.value = false
+  fundNameFromLookup.value = ''
+}
+
+function openAddFund() {
+  fundForm.value = { name: '', fundCode: '' }
+  resetFundLookup()
+  addFundVisible.value = true
+}
+
+function onFundCodeInput(value: string | number) {
+  fundForm.value.fundCode = String(value).replace(/\D/g, '').slice(0, 6)
+}
+
+function clearAutoFundName() {
+  if (!fundForm.value.name.trim() || fundForm.value.name === fundNameFromLookup.value) {
+    fundForm.value.name = ''
+    fundNameFromLookup.value = ''
   }
 }
 
-watch(
-  goldAccount,
-  (account) => {
-    if (!account) return
-    if (!(goldBuyForm.value.confirmNav > 0) && account.nav) {
-      goldBuyForm.value.confirmNav = account.nav
-    }
-    if (!(goldSellForm.value.redeemNav > 0) && account.nav) {
-      goldSellForm.value.redeemNav = account.nav
-    }
-  },
-  { immediate: true },
+const fundReady = computed(
+  () => fundLookup.value != null && fundLookup.value.fund_code === fundForm.value.fundCode.trim(),
 )
 
-const goldBuyPreviewShares = computed(() => {
-  const amount = goldBuyForm.value.amount
-  const nav = goldBuyForm.value.confirmNav
-  if (!(amount > 0) || !(nav > 0)) return 0
-  return round(div(amount, nav), 4)
+const fundLookupHint = computed(() => {
+  const hit = fundLookup.value
+  if (!hit) return ''
+  return [hit.name, hit.fund_type, hit.company].filter(Boolean).join(' · ')
 })
 
-const goldSellPreview = computed(() => {
-  const shares = goldSellForm.value.shares
-  const nav = goldSellForm.value.redeemNav
-  const costNav = goldSummary.value.costNav
-  if (!(shares > 0)) return { proceeds: 0, cost: 0, realized: 0 }
-  const proceeds = nav > 0 ? round(mul(shares, nav), 2) : 0
-  const cost = costNav > 0 ? round(mul(shares, costNav), 2) : 0
-  return {
-    proceeds,
-    cost,
-    realized: round(sub(proceeds, cost), 2),
-  }
-})
+watch(
+  () => fundForm.value.fundCode,
+  async (raw) => {
+    const code = raw.trim()
+    const seq = ++fundLookupSeq
+    fundLookup.value = null
+    fundLookupError.value = ''
+    clearAutoFundName()
+    if (!/^\d{6}$/.test(code)) {
+      fundLookingUp.value = false
+      return
+    }
+    fundLookingUp.value = true
+    try {
+      const hit = await lookupFund(code)
+      if (seq !== fundLookupSeq) return
+      fundLookup.value = hit
+      const current = fundForm.value.name.trim()
+      if (!current || current === fundNameFromLookup.value) {
+        fundForm.value.name = hit.name
+        fundNameFromLookup.value = hit.name
+      }
+    } catch (error) {
+      if (seq !== fundLookupSeq) return
+      fundLookupError.value = error instanceof Error ? error.message : '基金查询失败'
+    } finally {
+      if (seq === fundLookupSeq) fundLookingUp.value = false
+    }
+  },
+)
 
-function saveGoldBuy() {
+async function saveAddFund() {
+  if (fundSaving.value || fundLookingUp.value) return
+  fundSaving.value = true
   try {
-    const lot = store.addGoldFundLot({
-      amount: goldBuyForm.value.amount,
-      confirmNav: goldBuyForm.value.confirmNav,
-      confirmDate: goldBuyForm.value.confirmDate,
-      note: goldBuyForm.value.note,
+    const hit = await lookupFund(fundForm.value.fundCode)
+    fundLookup.value = hit
+    fundLookupError.value = ''
+    const account = store.addFundProduct({
+      name: fundForm.value.name.trim() || hit.name,
+      fundCode: hit.fund_code,
     })
-    ElMessage.success(
-      `已加仓 ${formatMoney(lot.amount, 'CNY')} → ${lot.shares.toFixed(4)} 份（净值 ${lot.confirm_nav.toFixed(4)}）`,
-    )
-    goldBuyForm.value.amount = 100
-    goldBuyForm.value.note = ''
+    addFundVisible.value = false
+    ElMessage.success(`已添加基金：${account.name}（${account.fund_code}）`)
   } catch (error) {
-    if (error instanceof Error) ElMessage.error(error.message)
-  }
-}
-
-function saveGoldSell() {
-  try {
-    const result = store.sellGoldFundShares({
-      shares: goldSellForm.value.shares,
-      redeemNav: goldSellForm.value.redeemNav,
-      note: goldSellForm.value.note,
-    })
-    const sign = result.realized_pnl >= 0 ? '+' : ''
-    ElMessage.success(
-      `已卖出 ${result.sold_shares.toFixed(4)} 份 · 估到账 ${formatMoney(result.proceeds, 'CNY')} · 实现盈亏 ${sign}${formatMoney(result.realized_pnl, 'CNY')}（FIFO）`,
-    )
-    goldSellForm.value.shares = 0
-    goldSellForm.value.note = ''
-  } catch (error) {
-    if (error instanceof Error) ElMessage.error(error.message)
+    const message = error instanceof Error ? error.message : '添加基金失败'
+    const lookupRejected =
+      message.startsWith('未找到基金') ||
+      message.startsWith('基金查询失败') ||
+      message.startsWith('基金代码')
+    if (lookupRejected) {
+      fundLookup.value = null
+      fundLookupError.value = message
+    }
+    ElMessage.error(message)
+  } finally {
+    fundSaving.value = false
   }
 }
 
@@ -500,6 +385,37 @@ function saveEditStock() {
 
 function saveHkdAmount(id: string, amount: number) {
   store.updatePoolAmount('hkd_pool', id, amount)
+}
+
+function hkdTransferTargets(account: PoolAccount) {
+  return store.accounts.hkd_pool.filter((item) => item.id !== account.id)
+}
+
+function transferHkd(
+  from: PoolAccount,
+  payload: { toId: string; amount: number; received?: number },
+) {
+  try {
+    const result = store.transferPoolAmount({
+      fromPool: 'hkd_pool',
+      fromId: from.id,
+      toPool: 'hkd_pool',
+      toId: payload.toId,
+      amount: payload.amount,
+      received: payload.received,
+    })
+    const target = store.accounts.hkd_pool.find((item) => item.id === payload.toId)
+    const receivedText =
+      result.fromCurrency === result.toCurrency
+        ? ''
+        : ` → ${formatMoney(result.received, result.toCurrency)}`
+    ElMessage.success(
+      `已从 ${from.name} 转出 ${formatMoney(result.amount, result.fromCurrency)}${receivedText} 到 ${target?.name ?? payload.toId}`,
+    )
+  } catch (error) {
+    if (error instanceof Error) ElMessage.error(error.message)
+    throw error
+  }
 }
 
 function savePoolYield(
@@ -543,7 +459,7 @@ function isRmbEditable(id: string) {
     <div>
       <h1 class="section-title">账户明细</h1>
       <p class="mt-1 text-sm text-ink-muted">
-        安全 / 进取 / 中性分池；黄金为中性，HTX/OKX 为加密赌注池（非安全）
+        安全 / 进取 / 中性分池；公募基金为中性，HTX/OKX 为加密赌注池（非安全）
       </p>
     </div>
 
@@ -570,7 +486,7 @@ function isRmbEditable(id: string) {
 
     <section v-show="activeTab === 'rmb'" class="space-y-3">
       <p class="text-xs text-ink-muted">
-        余利宝 / 手头现金默认按「存入 / 取出」记变动，也会显示加减了多少；需要时再切「改总额」。
+        余利宝 / 手头现金按银行或 App 上的账面余额修改，保存时显示这次加减了多少。
       </p>
       <LoanPanel />
       <div class="grid gap-3 sm:grid-cols-2">
@@ -589,7 +505,7 @@ function isRmbEditable(id: string) {
     <section v-show="activeTab === 'hkd'" class="space-y-3">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <p class="text-xs text-ink-muted">
-          港币账户支持「存入 / 取出」或改总额；可新增银行账户（如渣打），年化可手改。
+          按银行 App 改账面余额。转到池内其他账户会两边一起改；跨币种填实际到账。可新增账户。
         </p>
         <el-button type="primary" plain @click="openAddHkd">新增港币账户</el-button>
       </div>
@@ -601,8 +517,10 @@ function isRmbEditable(id: string) {
           editable
           editable-yield
           removable
+          :transfer-targets="hkdTransferTargets(account)"
           @save-amount="(amount) => saveHkdAmount(account.id, amount)"
           @save-yield="(rate) => savePoolYield('hkd_pool', account.id, rate)"
+          @transfer="(payload) => transferHkd(account, payload)"
           @remove="removeHkd(account)"
         />
       </div>
@@ -675,534 +593,66 @@ function isRmbEditable(id: string) {
 
     <section v-show="activeTab === 'neutral'" class="space-y-4">
       <YuanGouPanel />
-      <div v-if="goldNeutral.length" class="space-y-3">
+      <div class="space-y-4">
         <div class="flex flex-wrap items-end justify-between gap-2">
           <div>
-            <h3 class="mb-1 text-sm font-medium text-accent">中性 · 黄金</h3>
+            <h3 class="mb-1 text-sm font-medium text-accent">中性 · 基金</h3>
             <p class="text-xs text-ink-muted">
-              加仓/卖出按份额记账（卖出 FIFO）；勿再手改总额。点问号看公式。
+              每只公募基金独立份额、净值与 FIFO。买入只记份额，不从现金扣款。
             </p>
           </div>
-          <el-button type="primary" plain :loading="goldNavRefreshing" @click="refreshGoldNav">
-            刷新净值/浮盈
-          </el-button>
+          <el-button type="primary" plain @click="openAddFund">添加基金</el-button>
         </div>
-
-        <div v-if="goldAccount" class="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div class="panel min-w-0 space-y-3 px-4 py-3 text-xs md:px-5">
-            <p class="font-medium text-ink-muted">
-              今日盈亏统计
-              <span v-if="goldDaily.asOf">（净值日 {{ goldDaily.asOf }}）</span>
-            </p>
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <p class="text-ink-muted">
-                  <FormulaTooltip>
-                    成本
-                    <template #content>
-                      <p>加仓明细未卖出部分的投入合计（FIFO 成本）</p>
-                      <p class="font-mono">{{ formatMoney(goldSummary.cost, 'CNY') }}</p>
-                    </template>
-                  </FormulaTooltip>
-                </p>
-                <p class="stat-num mt-0.5 font-semibold">
-                  {{ formatMoney(goldSummary.cost, 'CNY') }}
-                </p>
-              </div>
-              <div>
-                <p class="text-ink-muted">
-                  <FormulaTooltip>
-                    市值
-                    <template #content>
-                      <p>市值 = 总份额 × 最新净值</p>
-                      <p class="font-mono">
-                        {{ goldSharesText }} × {{ goldNavText }} =
-                        {{ formatMoney(goldSummary.market, 'CNY') }}
-                      </p>
-                    </template>
-                  </FormulaTooltip>
-                </p>
-                <p class="stat-num mt-0.5 font-semibold">
-                  {{ formatMoney(goldSummary.market, 'CNY') }}
-                </p>
-              </div>
-              <div>
-                <p class="text-ink-muted">
-                  <FormulaTooltip>
-                    持仓份额
-                    <template #content>
-                      <p>加仓明细未卖出份额合计</p>
-                    </template>
-                  </FormulaTooltip>
-                </p>
-                <p class="stat-num mt-0.5 font-semibold">{{ goldSharesText }}</p>
-              </div>
-              <div>
-                <p class="text-ink-muted">
-                  <FormulaTooltip>
-                    成本净值
-                    <template #content>
-                      <p>持仓成本净值 = 总成本 ÷ 总份额</p>
-                      <p class="font-mono">
-                        {{ formatMoney(goldSummary.cost, 'CNY') }}
-                        ÷ {{ goldSharesText }} = {{ goldCostNavText }}
-                      </p>
-                    </template>
-                  </FormulaTooltip>
-                </p>
-                <p class="stat-num mt-0.5 font-semibold">
-                  {{ goldSummary.costNav ? goldSummary.costNav.toFixed(4) : '—' }}
-                </p>
-              </div>
-              <div>
-                <p class="text-ink-muted">
-                  <FormulaTooltip>
-                    最新净值
-                    <template #content>
-                      <p>已公布单位净值（刷新净值后写入）</p>
-                      <p class="font-mono">{{ goldNavText }}</p>
-                    </template>
-                  </FormulaTooltip>
-                </p>
-                <p class="stat-num mt-0.5 font-semibold">
-                  {{ goldSummary.nav ? goldSummary.nav.toFixed(4) : '—' }}
-                </p>
-                <p v-if="goldSummary.asOf" class="mt-0.5 text-[10px] text-ink-muted">
-                  {{ goldSummary.asOf }}
-                </p>
-              </div>
-              <div>
-                <p class="text-ink-muted">
-                  <FormulaTooltip>
-                    上日净值
-                    <template #content>
-                      <p>上一交易日单位净值</p>
-                    </template>
-                  </FormulaTooltip>
-                </p>
-                <p class="stat-num mt-0.5 font-semibold">{{ goldPrevNavText }}</p>
-              </div>
-              <div>
-                <p class="text-ink-muted">
-                  <FormulaTooltip>
-                    日涨跌幅
-                    <template #content>
-                      <p>日涨跌幅 = (最新净值 − 上日净值) ÷ 上日净值</p>
-                      <p v-if="goldDaily.available" class="font-mono">
-                        ({{ goldNavText }} − {{ goldPrevNavText }}) ÷ {{ goldPrevNavText }}
-                        =
-                        {{ goldDaily.dayChange >= 0 ? '+' : ''
-                        }}{{ formatPercent(goldDaily.dayChange) }}
-                      </p>
-                    </template>
-                  </FormulaTooltip>
-                </p>
-                <p
-                  class="stat-num mt-0.5 font-semibold"
-                  :class="
-                    goldDaily.available ? quoteToneClass(goldDaily.dayChange) : 'text-ink-muted'
-                  "
-                >
-                  {{
-                    goldDaily.available
-                      ? `${goldDaily.dayChange >= 0 ? '+' : ''}${formatPercent(goldDaily.dayChange)}`
-                      : '—'
-                  }}
-                </p>
-              </div>
-              <div>
-                <p class="text-ink-muted">
-                  <FormulaTooltip>
-                    今日盈亏
-                    <template #content>
-                      <p>今日盈亏 = 份额 × (最新净值 − 上日净值)</p>
-                      <p>净值当日新确认的份额从确认净值起算</p>
-                      <p v-if="goldDaily.available" class="font-mono">
-                        {{ goldSharesText }} × ({{ goldNavText }} − {{ goldPrevNavText }}) =
-                        {{ goldDaily.pnl >= 0 ? '+' : ''
-                        }}{{ formatMoney(goldDaily.pnl, 'CNY') }} （{{
-                          goldDaily.dayChange >= 0 ? '+' : ''
-                        }}{{ formatPercent(goldDaily.dayChange) }}）
-                      </p>
-                      <p v-else>刷新净值后显示</p>
-                    </template>
-                  </FormulaTooltip>
-                </p>
-                <p
-                  v-if="goldDaily.available"
-                  class="stat-num mt-0.5 font-semibold"
-                  :class="quoteToneClass(goldDaily.pnl)"
-                >
-                  {{ goldDaily.pnl >= 0 ? '+' : '' }}{{ formatMoney(goldDaily.pnl, 'CNY') }}
-                </p>
-                <p v-else class="mt-0.5 text-ink-muted">刷新净值后显示</p>
-              </div>
-              <div>
-                <p class="text-ink-muted">
-                  <FormulaTooltip>
-                    浮盈亏
-                    <template #content>
-                      <p>浮盈亏 = 市值 − 成本</p>
-                      <p class="font-mono">
-                        {{ goldSharesText }} × {{ goldNavText }} −
-                        {{ formatMoney(goldSummary.cost, 'CNY') }}
-                        =
-                        {{ goldSummary.pnl >= 0 ? '+' : ''
-                        }}{{ formatMoney(goldSummary.pnl, 'CNY') }}
-                      </p>
-                    </template>
-                  </FormulaTooltip>
-                </p>
-                <p class="stat-num mt-0.5 font-semibold" :class="quoteToneClass(goldSummary.pnl)">
-                  {{ goldSummary.pnl >= 0 ? '+' : '' }}{{ formatMoney(goldSummary.pnl, 'CNY') }}
-                </p>
-              </div>
-              <div>
-                <p class="text-ink-muted">
-                  <FormulaTooltip>
-                    浮盈亏率
-                    <template #content>
-                      <p>浮盈亏率 = 浮盈亏 ÷ 成本</p>
-                      <p class="font-mono">
-                        {{ goldSummary.pnl >= 0 ? '+' : ''
-                        }}{{ formatMoney(goldSummary.pnl, 'CNY') }} ÷
-                        {{ formatMoney(goldSummary.cost, 'CNY') }}
-                        =
-                        {{ goldSummary.rate >= 0 ? '+' : '' }}{{ formatPercent(goldSummary.rate) }}
-                      </p>
-                    </template>
-                  </FormulaTooltip>
-                </p>
-                <p class="stat-num mt-0.5 font-semibold" :class="quoteToneClass(goldSummary.rate)">
-                  {{ goldSummary.rate >= 0 ? '+' : '' }}{{ formatPercent(goldSummary.rate) }}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div class="panel min-w-0 overflow-x-auto px-3 py-3 md:px-4">
-            <p class="mb-1 text-xs font-medium text-ink-muted">每日盈亏</p>
-            <p class="mb-2 text-[11px] text-ink-muted">
-              每个净值日记一笔（如
-              8-25、8-26）；刷新净值后自动追加。已记下的历史日冻结，不随之后买卖改写。
-            </p>
-            <div v-if="goldDailyLog.length" class="overflow-x-auto">
-              <table class="w-full min-w-[560px] border-collapse text-left text-xs">
-                <thead>
-                  <tr class="border-b border-surface-line text-ink-muted">
-                    <th class="px-2 py-2 font-medium">日期</th>
-                    <th class="px-2 py-2 font-medium">
-                      <FormulaTooltip>
-                        当日盈亏
-                        <template #content>
-                          <p>当日盈亏 = 当日份额 × (当日净值 − 上日净值)</p>
-                          <p>记下后冻结，不随之后买卖改写</p>
-                        </template>
-                      </FormulaTooltip>
-                    </th>
-                    <th class="px-2 py-2 font-medium">
-                      <FormulaTooltip>
-                        日涨跌
-                        <template #content>
-                          <p>日涨跌 = (当日净值 − 上日净值) ÷ 上日净值</p>
-                        </template>
-                      </FormulaTooltip>
-                    </th>
-                    <th class="px-2 py-2 font-medium">净值</th>
-                    <th class="px-2 py-2 font-medium">上日净值</th>
-                    <th class="px-2 py-2 font-medium">当日份额</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    v-for="row in goldDailyPageRows"
-                    :key="row.date"
-                    class="border-b border-surface-line/60"
-                    :class="row.date === goldDaily.asOf ? 'bg-surface-tint/50' : ''"
-                  >
-                    <td class="px-2 py-2 font-medium">
-                      {{ formatMonthDay(row.date) }}
-                      <span class="ml-1 font-normal text-ink-muted">
-                        {{ row.date.slice(0, 4) }}
-                      </span>
-                    </td>
-                    <td class="px-2 py-2 font-medium" :class="quoteToneClass(row.pnl)">
-                      {{ row.pnl >= 0 ? '+' : '' }}{{ formatMoney(row.pnl, 'CNY') }}
-                    </td>
-                    <td class="px-2 py-2 font-mono" :class="quoteToneClass(row.day_change)">
-                      {{ row.day_change >= 0 ? '+' : '' }}{{ formatPercent(row.day_change) }}
-                    </td>
-                    <td class="px-2 py-2 font-mono">{{ row.nav.toFixed(4) }}</td>
-                    <td class="px-2 py-2 font-mono">{{ row.prev_nav.toFixed(4) }}</td>
-                    <td class="px-2 py-2 font-mono">{{ row.shares.toFixed(4) }}</td>
-                  </tr>
-                </tbody>
-                <tfoot>
-                  <tr class="font-medium">
-                    <td class="px-2 py-2">合计 {{ goldDailyLog.length }} 天</td>
-                    <td class="px-2 py-2" :class="quoteToneClass(goldDailyLogSum)">
-                      {{ goldDailyLogSum >= 0 ? '+' : '' }}{{ formatMoney(goldDailyLogSum, 'CNY') }}
-                    </td>
-                    <td class="px-2 py-2" colspan="4" />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-            <div v-if="goldDailyLog.length" class="mt-3 flex justify-end">
-              <el-pagination
-                v-model:current-page="goldDailyPage"
-                v-model:page-size="goldDailyPageSize"
-                :page-sizes="[10, 20, 30]"
-                :total="goldDailyLog.length"
-                layout="total, sizes, prev, pager, next"
-                size="small"
-                background
-              />
-            </div>
-            <p v-else class="text-xs text-ink-muted">
-              尚无每日记录。点「刷新净值/浮盈」后会按持仓补齐各净值日盈亏。
-            </p>
-          </div>
-
-          <div class="panel min-w-0 space-y-3 px-4 py-3 md:px-5">
-            <div class="flex flex-wrap gap-2">
-              <el-button
-                size="small"
-                :type="goldTradeMode === 'buy' ? 'primary' : 'default'"
-                plain
-                @click="goldTradeMode = 'buy'"
-              >
-                加仓
-              </el-button>
-              <el-button
-                size="small"
-                :type="goldTradeMode === 'sell' ? 'danger' : 'default'"
-                plain
-                @click="goldTradeMode = 'sell'"
-              >
-                卖出
-              </el-button>
-            </div>
-
-            <div v-if="goldTradeMode === 'buy'" class="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label class="mb-1 block text-xs text-ink-muted">投入金额（CNY）</label>
-                <AmountInput v-model="goldBuyForm.amount" :min="0.01" class="w-full!" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs text-ink-muted">确认净值</label>
-                <el-input-number
-                  v-model="goldBuyForm.confirmNav"
-                  :min="0.0001"
-                  :step="0.0001"
-                  :precision="4"
-                  controls-position="right"
-                  class="w-full!"
-                />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs text-ink-muted">确认日</label>
-                <el-date-picker
-                  v-model="goldBuyForm.confirmDate"
-                  type="date"
-                  value-format="YYYY-MM-DD"
-                  :disabled-date="isFutureBeijingDate"
-                  placeholder="选择确认日"
-                  class="w-full!"
-                />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs text-ink-muted">备注（可选）</label>
-                <el-input v-model="goldBuyForm.note" maxlength="32" placeholder="如：支付宝买入" />
-              </div>
-              <div class="sm:col-span-2 flex flex-wrap items-center gap-3">
-                <p class="text-xs text-ink-muted">
-                  <FormulaTooltip>
-                    预估份额
-                    <template #content>
-                      <p>加仓：份额 = 投入金额 ÷ 确认净值（写入明细）</p>
-                      <p class="font-mono">
-                        {{ formatMoney(goldBuyForm.amount, 'CNY') }}
-                        ÷ {{ goldBuyForm.confirmNav ? goldBuyForm.confirmNav.toFixed(4) : '—' }}
-                        =
-                        {{ goldBuyPreviewShares ? goldBuyPreviewShares.toFixed(4) : '—' }}
-                      </p>
-                    </template>
-                  </FormulaTooltip>
-                  =
-                  <span class="font-mono text-ink">
-                    {{ goldBuyPreviewShares ? goldBuyPreviewShares.toFixed(4) : '—' }}
-                  </span>
-                </p>
-                <el-button type="primary" @click="saveGoldBuy">确认加仓</el-button>
-              </div>
-            </div>
-
-            <div v-else class="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label class="mb-1 block text-xs text-ink-muted">卖出份额</label>
-                <el-input-number
-                  v-model="goldSellForm.shares"
-                  :min="0.0001"
-                  :max="goldSummary.shares || undefined"
-                  :step="0.01"
-                  :precision="4"
-                  controls-position="right"
-                  class="w-full!"
-                />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs text-ink-muted">赎回净值（估到账）</label>
-                <el-input-number
-                  v-model="goldSellForm.redeemNav"
-                  :min="0.0001"
-                  :step="0.0001"
-                  :precision="4"
-                  controls-position="right"
-                  class="w-full!"
-                />
-              </div>
-              <div class="sm:col-span-2">
-                <label class="mb-1 block text-xs text-ink-muted">备注（可选）</label>
-                <el-input v-model="goldSellForm.note" maxlength="32" placeholder="如：支付宝赎回" />
-              </div>
-              <div class="sm:col-span-2 flex flex-wrap items-center gap-3">
-                <p class="text-xs text-ink-muted">
-                  <FormulaTooltip>
-                    FIFO 估到账
-                    <template #content>
-                      <p>卖出按确认日 FIFO 扣份额与对应成本</p>
-                      <p>估到账 = 卖出份额 × 赎回净值</p>
-                      <p>实现盈亏预览按平均成本净值，实际按明细 FIFO</p>
-                      <p class="font-mono">
-                        {{ goldSellForm.shares ? goldSellForm.shares.toFixed(4) : '—' }}
-                        × {{ goldSellForm.redeemNav ? goldSellForm.redeemNav.toFixed(4) : '—' }} =
-                        {{ formatMoney(goldSellPreview.proceeds, 'CNY') }}
-                      </p>
-                    </template>
-                  </FormulaTooltip>
-                  {{ formatMoney(goldSellPreview.proceeds, 'CNY') }}
-                  · 实现盈亏
-                  <span :class="quoteToneClass(goldSellPreview.realized)">
-                    {{ goldSellPreview.realized >= 0 ? '+' : ''
-                    }}{{ formatMoney(goldSellPreview.realized, 'CNY') }}
-                  </span>
-                </p>
-                <el-button type="danger" @click="saveGoldSell">确认卖出</el-button>
-              </div>
-            </div>
-          </div>
-
-          <div class="panel min-w-0 overflow-x-auto px-3 py-3 md:px-4">
-            <p class="mb-2 text-xs font-medium text-ink-muted">加仓明细（FIFO 卖出从最早一笔扣）</p>
-            <table
-              v-if="goldLots.length"
-              class="w-full min-w-[720px] border-collapse text-left text-xs"
-            >
-              <thead>
-                <tr class="border-b border-surface-line text-ink-muted">
-                  <th class="px-2 py-2 font-medium">确认日</th>
-                  <th class="px-2 py-2 font-medium">投入</th>
-                  <th class="px-2 py-2 font-medium">确认净值</th>
-                  <th class="px-2 py-2 font-medium">
-                    <FormulaTooltip>
-                      份额
-                      <template #content>
-                        <p>份额 = 投入金额 ÷ 确认净值</p>
-                      </template>
-                    </FormulaTooltip>
-                  </th>
-                  <th class="px-2 py-2 font-medium">
-                    <FormulaTooltip>
-                      现市值
-                      <template #content>
-                        <p>现市值 = 该笔份额 × 最新净值</p>
-                      </template>
-                    </FormulaTooltip>
-                  </th>
-                  <th class="px-2 py-2 font-medium">
-                    <FormulaTooltip>
-                      今日盈亏
-                      <template #content>
-                        <p>该笔份额 × (最新净值 − 上日净值)</p>
-                        <p>确认日当天从确认净值起算</p>
-                      </template>
-                    </FormulaTooltip>
-                  </th>
-                  <th class="px-2 py-2 font-medium">
-                    <FormulaTooltip>
-                      浮盈亏
-                      <template #content>
-                        <p>浮盈亏 = 现市值 − 该笔投入</p>
-                      </template>
-                    </FormulaTooltip>
-                  </th>
-                  <th class="px-2 py-2 font-medium">备注</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="lot in goldLots" :key="lot.id" class="border-b border-surface-line/60">
-                  <td class="px-2 py-2 font-mono">{{ lot.confirm_date }}</td>
-                  <td class="px-2 py-2">{{ formatMoney(lot.amount, 'CNY') }}</td>
-                  <td class="px-2 py-2 font-mono">{{ lot.confirm_nav.toFixed(4) }}</td>
-                  <td class="px-2 py-2 font-mono">{{ lot.shares.toFixed(4) }}</td>
-                  <td class="px-2 py-2">{{ formatMoney(lotMarketValue(lot), 'CNY') }}</td>
-                  <td
-                    class="px-2 py-2"
-                    :class="
-                      goldDaily.available ? quoteToneClass(lotTodayPnl(lot)) : 'text-ink-muted'
-                    "
-                  >
-                    <template v-if="goldDaily.available">
-                      {{ lotTodayPnl(lot) >= 0 ? '+' : ''
-                      }}{{ formatMoney(lotTodayPnl(lot), 'CNY') }}
-                    </template>
-                    <template v-else>—</template>
-                  </td>
-                  <td class="px-2 py-2" :class="quoteToneClass(lotPnl(lot))">
-                    {{ lotPnl(lot) >= 0 ? '+' : '' }}{{ formatMoney(lotPnl(lot), 'CNY') }} （{{
-                      formatPercent(lotPnlRate(lot))
-                    }}）
-                  </td>
-                  <td class="px-2 py-2 text-ink-muted">{{ lot.note || '—' }}</td>
-                </tr>
-              </tbody>
-              <tfoot>
-                <tr class="font-medium">
-                  <td class="px-2 py-2">合计</td>
-                  <td class="px-2 py-2">{{ formatMoney(goldSummary.cost, 'CNY') }}</td>
-                  <td class="px-2 py-2">—</td>
-                  <td class="px-2 py-2 font-mono">
-                    {{ goldSummary.shares ? goldSummary.shares.toFixed(4) : '—' }}
-                  </td>
-                  <td class="px-2 py-2">{{ formatMoney(goldSummary.market, 'CNY') }}</td>
-                  <td
-                    class="px-2 py-2"
-                    :class="goldDaily.available ? quoteToneClass(goldDaily.pnl) : 'text-ink-muted'"
-                  >
-                    <template v-if="goldDaily.available">
-                      {{ goldDaily.pnl >= 0 ? '+' : '' }}{{ formatMoney(goldDaily.pnl, 'CNY') }}
-                    </template>
-                    <template v-else>—</template>
-                  </td>
-                  <td class="px-2 py-2" :class="quoteToneClass(goldSummary.pnl)">
-                    {{ goldSummary.pnl >= 0 ? '+' : ''
-                    }}{{ formatMoney(goldSummary.pnl, 'CNY') }} （{{
-                      formatPercent(goldSummary.rate)
-                    }}）
-                  </td>
-                  <td class="px-2 py-2" />
-                </tr>
-              </tfoot>
-            </table>
-            <p v-else class="text-xs text-ink-muted">暂无加仓明细</p>
-          </div>
-        </div>
-
-        <div class="grid gap-3 sm:grid-cols-2">
-          <PoolAccountCard v-for="account in goldNeutral" :key="account.id" :account="account" />
-        </div>
+        <p v-if="!fundProducts.length" class="text-sm text-ink-muted">暂无基金产品，点右上角添加</p>
+        <FundProductPanel v-for="account in fundProducts" :key="account.id" :account="account" />
       </div>
+      <div v-if="otherNeutral.length" class="grid gap-3 sm:grid-cols-2">
+        <PoolAccountCard v-for="account in otherNeutral" :key="account.id" :account="account" />
+      </div>
+
+      <el-dialog
+        v-model="addFundVisible"
+        title="添加基金"
+        width="92%"
+        class="max-w-md"
+        destroy-on-close
+      >
+        <div class="space-y-4">
+          <div>
+            <label class="mb-1 block text-xs text-ink-muted">基金代码（6 位）</label>
+            <el-input
+              :model-value="fundForm.fundCode"
+              placeholder="例如：005827"
+              maxlength="6"
+              inputmode="numeric"
+              @update:model-value="onFundCodeInput"
+            />
+            <p v-if="fundLookingUp" class="mt-1 text-xs text-ink-muted">正在联网查询…</p>
+            <p v-else-if="fundLookup" class="mt-1 text-xs text-safe">已匹配 {{ fundLookupHint }}</p>
+            <p v-else-if="fundLookupError" class="mt-1 text-xs text-alert">{{ fundLookupError }}</p>
+            <p v-else class="mt-1 text-xs text-ink-muted">输入完整代码后自动查询，查不到不能添加</p>
+          </div>
+          <div>
+            <label class="mb-1 block text-xs text-ink-muted">基金名称</label>
+            <el-input
+              v-model="fundForm.name"
+              placeholder="查询成功后自动填入，可改"
+              maxlength="48"
+            />
+          </div>
+        </div>
+        <template #footer>
+          <el-button @click="addFundVisible = false">取消</el-button>
+          <el-button
+            type="primary"
+            :loading="fundSaving || fundLookingUp"
+            :disabled="!fundReady"
+            @click="saveAddFund"
+          >
+            添加
+          </el-button>
+        </template>
+      </el-dialog>
       <div v-if="cryptoAssets.length">
         <div class="mb-2 flex flex-wrap items-end justify-between gap-2">
           <h3 class="text-sm font-medium text-alert">加密赌注池（投机级）· 持仓账户</h3>

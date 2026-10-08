@@ -2,6 +2,7 @@ import dayjs from 'dayjs'
 import type { FundLot, PoolAccount, PoolKey, UsStockHolding } from '@/types/finance'
 import { todayBeijingDate } from '@/utils/datetime'
 import { add, div, mul, round, sub } from '@/utils/decimal'
+import { isNavFundAccount } from '@/utils/fund-nav'
 import type { FinanceRefs } from './state'
 
 export function createAccounts(
@@ -96,16 +97,47 @@ export function createAccounts(
     }
   }
 
-  function getGoldAccount() {
-    const gold = accounts.value.rmb_pool.find((item) => item.id === 'gold_etf')
-    if (!gold) throw new Error('未找到黄金账户')
-    if (!gold.fund_lots) gold.fund_lots = []
-    return gold
+  /**
+   * 池内转账。同币种到账等于转出；跨币种必须填写银行实际到账，不用中间汇率估算。
+   */
+  function transferPoolAmount(input: {
+    fromPool: Exclude<PoolKey, 'us_stock_pool'>
+    fromId: string
+    toPool: Exclude<PoolKey, 'us_stock_pool'>
+    toId: string
+    amount: number
+    received?: number
+  }) {
+    if (input.fromPool === input.toPool && input.fromId === input.toId) {
+      throw new Error('不能转到同一账户')
+    }
+    const amount = round(input.amount, 2)
+    if (!(amount > 0)) throw new Error('转出金额须大于 0')
+    const from = accounts.value[input.fromPool].find((item) => item.id === input.fromId)
+    const to = accounts.value[input.toPool].find((item) => item.id === input.toId)
+    if (!from) throw new Error(`未找到账户 ${input.fromId}`)
+    if (!to) throw new Error(`未找到账户 ${input.toId}`)
+    if (from.amount + 1e-9 < amount) throw new Error('转出金额超过余额')
+    const sameCurrency = from.currency === to.currency
+    const received = sameCurrency ? amount : round(input.received ?? 0, 2)
+    if (!sameCurrency && !(received > 0)) {
+      throw new Error('跨币种请填写实际到账金额')
+    }
+    updatePoolAmount(input.fromPool, input.fromId, round(sub(from.amount, amount), 2))
+    updatePoolAmount(input.toPool, input.toId, round(add(to.amount, received), 2))
+    return { amount, received, fromCurrency: from.currency, toCurrency: to.currency }
+  }
+
+  function getFundAccount(id: string) {
+    const fund = accounts.value.rmb_pool.find((item) => item.id === id)
+    if (!fund || !isNavFundAccount(fund)) throw new Error('未找到基金账户')
+    if (!fund.fund_lots) fund.fund_lots = []
+    return fund
   }
 
   /** 按加仓明细重算份额/成本/市值/浮盈 */
-  function syncGoldFromLots(gold: PoolAccount) {
-    const lots = gold.fund_lots ?? []
+  function syncFundFromLots(fund: PoolAccount) {
+    const lots = fund.fund_lots ?? []
     const shares = round(
       lots.reduce((sum, lot) => add(sum, lot.shares), 0),
       4,
@@ -114,37 +146,40 @@ export function createAccounts(
       lots.reduce((sum, lot) => add(sum, lot.amount), 0),
       2,
     )
-    gold.shares = shares
-    gold.cost_amount = cost
-    const nav = gold.nav
+    fund.shares = shares
+    fund.cost_amount = cost
+    const nav = fund.nav
     if (nav != null && nav > 0 && shares > 0) {
-      gold.amount = round(mul(shares, nav), 2)
+      fund.amount = round(mul(shares, nav), 2)
     } else {
-      gold.amount = cost
+      fund.amount = cost
     }
     if (cost > 0) {
-      gold.profit_rate = round(div(sub(gold.amount, cost), cost), 4)
+      fund.profit_rate = round(div(sub(fund.amount, cost), cost), 4)
     } else {
-      gold.profit_rate = 0
-      gold.amount = 0
+      fund.profit_rate = 0
+      fund.amount = 0
     }
-    gold.amount_updated_at = dayjs().toISOString()
+    fund.amount_updated_at = dayjs().toISOString()
   }
 
   /**
-   * 黄金加仓：金额 ÷ 确认净值 = 份额，写入 fund_lots。
+   * 基金加仓：金额 ÷ 确认净值 = 份额，写入 fund_lots。
    * confirmNav 缺省时用当前最新净值。
    */
-  function addGoldFundLot(input: {
-    amount: number
-    confirmNav?: number
-    confirmDate?: string
-    note?: string
-  }) {
-    const gold = getGoldAccount()
+  function addFundLot(
+    accountId: string,
+    input: {
+      amount: number
+      confirmNav?: number
+      confirmDate?: string
+      note?: string
+    },
+  ) {
+    const fund = getFundAccount(accountId)
     const amount = round(input.amount, 2)
     if (!(amount > 0)) throw new Error('加仓金额须大于 0')
-    const confirmNav = round(input.confirmNav ?? gold.nav ?? 0, 4)
+    const confirmNav = round(input.confirmNav ?? fund.nav ?? 0, 4)
     if (!(confirmNav > 0)) throw new Error('请填写确认净值（或先刷新最新净值）')
     const shares = round(div(amount, confirmNav), 4)
     if (!(shares > 0)) throw new Error('计算出的份额无效')
@@ -163,22 +198,25 @@ export function createAccounts(
       shares,
       note: input.note?.trim() || undefined,
     }
-    gold.fund_lots = [...(gold.fund_lots ?? []), lot].sort((a, b) =>
+    fund.fund_lots = [...(fund.fund_lots ?? []), lot].sort((a, b) =>
       a.confirm_date.localeCompare(b.confirm_date),
     )
-    syncGoldFromLots(gold)
+    syncFundFromLots(fund)
     return lot
   }
 
   /**
-   * 黄金卖出（FIFO）：按确认日从早到晚扣份额与对应成本。
+   * 基金卖出（FIFO）：按确认日从早到晚扣份额与对应成本。
    * redeemNav 用于估算到账金额（不计入浮盈成本，仅返回）。
    */
-  function sellGoldFundShares(input: { shares: number; redeemNav?: number; note?: string }) {
-    const gold = getGoldAccount()
+  function sellFundShares(
+    accountId: string,
+    input: { shares: number; redeemNav?: number; note?: string },
+  ) {
+    const fund = getFundAccount(accountId)
     const sellShares = round(input.shares, 4)
     if (!(sellShares > 0)) throw new Error('卖出份额须大于 0')
-    const lots = [...(gold.fund_lots ?? [])].sort((a, b) =>
+    const lots = [...(fund.fund_lots ?? [])].sort((a, b) =>
       a.confirm_date.localeCompare(b.confirm_date),
     )
     const totalShares = round(
@@ -214,10 +252,10 @@ export function createAccounts(
       }
     }
 
-    gold.fund_lots = nextLots
-    syncGoldFromLots(gold)
+    fund.fund_lots = nextLots
+    syncFundFromLots(fund)
 
-    const redeemNav = round(input.redeemNav ?? gold.nav ?? 0, 4)
+    const redeemNav = round(input.redeemNav ?? fund.nav ?? 0, 4)
     const proceeds = redeemNav > 0 ? round(mul(sellShares, redeemNav), 2) : 0
     const realized = round(sub(proceeds, costRemoved), 2)
     return {
@@ -228,6 +266,48 @@ export function createAccounts(
       redeem_nav: redeemNav || undefined,
       note: input.note?.trim() || undefined,
     }
+  }
+
+  function addGoldFundLot(input: {
+    amount: number
+    confirmNav?: number
+    confirmDate?: string
+    note?: string
+  }) {
+    return addFundLot('gold_etf', input)
+  }
+
+  function sellGoldFundShares(input: { shares: number; redeemNav?: number; note?: string }) {
+    return sellFundShares('gold_etf', input)
+  }
+
+  /** 新增一只人民币公募基金，归入中性端 */
+  function addFundProduct(input: { name: string; fundCode: string }) {
+    const name = input.name.trim()
+    if (!name) throw new Error('请填写基金名称')
+    const fundCode = input.fundCode.trim()
+    if (!/^\d{6}$/.test(fundCode)) throw new Error('基金代码须为 6 位数字')
+    const dup = accounts.value.rmb_pool.find((item) => item.fund_code?.trim() === fundCode)
+    if (dup) throw new Error(`基金代码 ${fundCode} 已被「${dup.name}」占用`)
+    const id = `fund_${fundCode}`
+    if (accounts.value.rmb_pool.some((item) => item.id === id)) {
+      throw new Error(`账户 id「${id}」已存在`)
+    }
+    const account: PoolAccount = {
+      id,
+      name,
+      type: 'fund',
+      amount: 0,
+      currency: 'CNY',
+      fund_code: fundCode,
+      shares: 0,
+      cost_amount: 0,
+      fund_lots: [],
+    }
+    accounts.value.rmb_pool.push(account)
+    ensureClassId(settings.value.asset_classification.neutral_assets, id)
+    dropClassId(settings.value.asset_classification.safe_assets, id)
+    return account
   }
 
   /** 更新账户年化收益率（小数，如 0.015 = 1.5%） */
@@ -303,6 +383,10 @@ export function createAccounts(
     updateStockHoldings,
     upsertPoolAccount,
     updatePoolAmount,
+    transferPoolAmount,
+    addFundLot,
+    sellFundShares,
+    addFundProduct,
     addGoldFundLot,
     sellGoldFundShares,
     updatePoolYieldRate,

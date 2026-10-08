@@ -7,16 +7,17 @@ import BarbellGauge from '@/components/barbell/BarbellGauge.vue'
 import PoolAccountCard from '@/components/accounts/PoolAccountCard.vue'
 import StockHoldingCard from '@/components/accounts/StockHoldingCard.vue'
 import { useFinanceStore } from '@/stores/finance'
+import { isNavFundAccount } from '@/utils/fund-nav'
 import { resolveNextPaydayHint } from '@/utils/payday'
 
 const store = useFinanceStore()
 
 const previewRmb = computed(() =>
-  store.accounts.rmb_pool.filter((a) => a.id !== 'gold_etf').slice(0, 2),
+  store.accounts.rmb_pool.filter((a) => !isNavFundAccount(a)).slice(0, 2),
 )
-const previewGold = computed(() => {
+const previewFunds = computed(() => {
   const ids = store.settings.asset_classification.neutral_assets
-  return store.accounts.rmb_pool.filter((a) => ids.includes(a.id))
+  return store.accounts.rmb_pool.filter((a) => ids.includes(a.id) && isNavFundAccount(a))
 })
 const previewStocks = computed(() => store.accounts.us_stock_pool.slice(0, 2))
 
@@ -57,7 +58,7 @@ const nextPayday = computed(() =>
       <div>
         <div class="mb-2 flex items-baseline justify-between">
           <h2 class="text-sm font-semibold">安全端</h2>
-          <span class="hint">不含黄金 / 加密</span>
+          <span class="hint">不含基金 / 加密</span>
         </div>
         <div class="grid gap-3">
           <PoolAccountCard v-for="account in previewRmb" :key="account.id" :account="account" />
@@ -72,10 +73,10 @@ const nextPayday = computed(() =>
         <div class="grid gap-3">
           <StockHoldingCard v-for="stock in previewStocks" :key="stock.id" :stock="stock" />
         </div>
-        <div v-if="previewGold.length" class="mt-4">
-          <h3 class="mb-2 text-sm font-semibold">中性 · 黄金</h3>
+        <div v-if="previewFunds.length" class="mt-4">
+          <h3 class="mb-2 text-sm font-semibold">中性 · 基金</h3>
           <div class="grid gap-3">
-            <PoolAccountCard v-for="account in previewGold" :key="account.id" :account="account" />
+            <PoolAccountCard v-for="account in previewFunds" :key="account.id" :account="account" />
           </div>
         </div>
       </div>

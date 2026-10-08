@@ -5,8 +5,10 @@ import type {
   FinanceRules,
   FundDailyPnl,
   LiveFxSnapshot,
+  PoolAccount,
 } from '@/types/finance'
 import { add, div, mul, round, sub } from '@/utils/decimal'
+import { isNavFundAccount } from '@/utils/fund-nav'
 import { fetchLiveFxQuotes, isFxStale } from '@/utils/fx-rates'
 import type { FinanceRefs } from './state'
 
@@ -109,34 +111,52 @@ export function createMarket(
     }
   }
 
+  function fundNeedsNavRefresh(fund: PoolAccount) {
+    if (!fund.fund_code?.trim() || !(fund.shares! > 0 || fund.fund_lots?.length)) return false
+    const today = dayjs().toISOString().slice(0, 10)
+    const lastFetchDay = fund.amount_updated_at?.slice(0, 10)
+    const hasPrevNav = fund.prev_nav != null && fund.prev_nav > 0
+    const ledger = fund.daily_pnl ?? []
+    const hasDailyLedger = ledger.length > 0
+    const firstLotDate = (fund.fund_lots ?? []).reduce(
+      (min, lot) => (!min || lot.confirm_date < min ? lot.confirm_date : min),
+      '',
+    )
+    const oldestLedger = ledger.length
+      ? ledger.reduce((min, row) => (row.date < min ? row.date : min), ledger[0]!.date)
+      : ''
+    const needsBackfill = Boolean(firstLotDate && oldestLedger && oldestLedger > firstLotDate)
+    return !(lastFetchDay === today && hasPrevNav && hasDailyLedger && !needsBackfill)
+  }
+
   /**
-   * 拉取黄金联接基金最新净值，按份额重算市值与浮盈亏。
+   * 拉取指定基金最新净值，按份额重算市值与浮盈亏。
    * 需账户已有 fund_code + shares（或 fund_lots）。
    */
-  async function refreshGoldFundNav() {
-    const gold = accounts.value.rmb_pool.find((item) => item.id === 'gold_etf')
-    if (!gold) throw new Error('未找到黄金账户')
-    const code = gold.fund_code?.trim()
-    if (!code) throw new Error('黄金账户缺少基金代码')
+  async function refreshFundNav(accountId: string) {
+    const fund = accounts.value.rmb_pool.find((item) => item.id === accountId)
+    if (!fund || !isNavFundAccount(fund)) throw new Error('未找到基金账户')
+    const code = fund.fund_code?.trim()
+    if (!code) throw new Error(`${fund.name} 缺少基金代码`)
 
-    let shares = gold.shares ?? 0
-    let cost = gold.cost_amount ?? 0
-    if (!(shares > 0) && gold.fund_lots?.length) {
+    let shares = fund.shares ?? 0
+    let cost = fund.cost_amount ?? 0
+    if (!(shares > 0) && fund.fund_lots?.length) {
       shares = round(
-        gold.fund_lots.reduce((sum, lot) => add(sum, lot.shares), 0),
+        fund.fund_lots.reduce((sum, lot) => add(sum, lot.shares), 0),
         4,
       )
       cost = round(
-        gold.fund_lots.reduce((sum, lot) => add(sum, lot.amount), 0),
+        fund.fund_lots.reduce((sum, lot) => add(sum, lot.amount), 0),
         2,
       )
-      gold.shares = shares
-      gold.cost_amount = cost
+      fund.shares = shares
+      fund.cost_amount = cost
     }
-    if (!(shares > 0)) throw new Error('黄金账户缺少持仓份额')
-    if (!(cost > 0)) throw new Error('黄金账户缺少成本')
+    if (!(shares > 0)) throw new Error(`${fund.name} 缺少持仓份额`)
+    if (!(cost > 0)) throw new Error(`${fund.name} 缺少成本`)
 
-    const lots = gold.fund_lots ?? []
+    const lots = fund.fund_lots ?? []
     const firstLotDate = lots.reduce(
       (min, lot) => (!min || lot.confirm_date < min ? lot.confirm_date : min),
       '',
@@ -151,17 +171,17 @@ export function createMarket(
     const pnl = sub(market, cost)
     const rate = div(pnl, cost)
 
-    gold.nav = quote.nav
-    gold.nav_updated_at = quote.as_of
-    gold.prev_nav = quote.prev_nav
-    gold.nav_day_change = quote.day_change
-    gold.shares = shares
-    gold.cost_amount = cost
-    gold.amount = market
-    gold.profit_rate = round(rate, 4)
-    gold.amount_updated_at = dayjs().toISOString()
+    fund.nav = quote.nav
+    fund.nav_updated_at = quote.as_of
+    fund.prev_nav = quote.prev_nav
+    fund.nav_day_change = quote.day_change
+    fund.shares = shares
+    fund.cost_amount = cost
+    fund.amount = market
+    fund.profit_rate = round(rate, 4)
+    fund.amount_updated_at = dayjs().toISOString()
 
-    const byDate = new Map((gold.daily_pnl ?? []).map((row) => [row.date, row] as const))
+    const byDate = new Map((fund.daily_pnl ?? []).map((row) => [row.date, row] as const))
     const latestDate = quote.as_of
     for (const item of quotes) {
       if (!(item.prev_nav! > 0)) continue
@@ -184,7 +204,7 @@ export function createMarket(
       }
       byDate.set(item.as_of, row)
     }
-    gold.daily_pnl = [...byDate.values()].sort((a, b) => b.date.localeCompare(a.date))
+    fund.daily_pnl = [...byDate.values()].sort((a, b) => b.date.localeCompare(a.date))
 
     return {
       nav: quote.nav,
@@ -192,36 +212,39 @@ export function createMarket(
       amount: market,
       cost,
       pnl: round(pnl, 2),
-      profit_rate: gold.profit_rate,
+      profit_rate: fund.profit_rate,
       day_change: quote.day_change,
       prev_nav: quote.prev_nav,
     }
   }
 
   /** 启动时每天最多自动拉一次净值（周末净值不更也会跳过重复请求） */
+  async function ensureDailyFundNav() {
+    const targets = accounts.value.rmb_pool.filter(
+      (item) => isNavFundAccount(item) && fundNeedsNavRefresh(item),
+    )
+    const results = []
+    for (const fund of targets) {
+      try {
+        results.push(await refreshFundNav(fund.id))
+      } catch {
+        /* 单只失败不影响其他产品 */
+      }
+    }
+    return { updated: results.length > 0, results }
+  }
+
+  async function refreshGoldFundNav() {
+    return refreshFundNav('gold_etf')
+  }
+
   async function ensureDailyGoldFundNav() {
     const gold = accounts.value.rmb_pool.find((item) => item.id === 'gold_etf')
-    if (!gold?.fund_code || !(gold.shares! > 0 || gold.fund_lots?.length)) {
-      return { updated: false as const, result: null }
-    }
-    const today = dayjs().toISOString().slice(0, 10)
-    const lastFetchDay = gold.amount_updated_at?.slice(0, 10)
-    const hasPrevNav = gold.prev_nav != null && gold.prev_nav > 0
-    const ledger = gold.daily_pnl ?? []
-    const hasDailyLedger = ledger.length > 0
-    const firstLotDate = (gold.fund_lots ?? []).reduce(
-      (min, lot) => (!min || lot.confirm_date < min ? lot.confirm_date : min),
-      '',
-    )
-    const oldestLedger = ledger.length
-      ? ledger.reduce((min, row) => (row.date < min ? row.date : min), ledger[0]!.date)
-      : ''
-    const needsBackfill = Boolean(firstLotDate && oldestLedger && oldestLedger > firstLotDate)
-    if (lastFetchDay === today && hasPrevNav && hasDailyLedger && !needsBackfill) {
+    if (!gold || !fundNeedsNavRefresh(gold)) {
       return { updated: false as const, result: null }
     }
     try {
-      const result = await refreshGoldFundNav()
+      const result = await refreshFundNav('gold_etf')
       return { updated: true as const, result }
     } catch {
       return { updated: false as const, result: null }
@@ -323,6 +346,8 @@ export function createMarket(
     refreshStockMarketPrices,
     refreshStockDividendYields,
     refreshStockQuotesAndYields,
+    refreshFundNav,
+    ensureDailyFundNav,
     refreshGoldFundNav,
     ensureDailyGoldFundNav,
     updateRules,
