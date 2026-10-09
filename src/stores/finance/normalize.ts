@@ -16,8 +16,9 @@ import type {
   YuanGouState,
 } from '@/types/finance'
 import { createId } from '@/utils/salary-allocation'
-import { add, div, mul, round, sub } from '@/utils/decimal'
+import { div, mul, round, sub } from '@/utils/decimal'
 import { isNavFundAccount } from '@/utils/fund-nav'
+import { applyFundHoldingsFromLots } from '@/utils/fund-trade'
 import { mergeFunFundCharges } from '@/utils/fun-fund-charge'
 
 /** 深拷贝纯数据；兼容 Vue Proxy（structuredClone 无法克隆 Proxy） */
@@ -94,16 +95,10 @@ export function normalizeAccounts(raw: AccountsState | undefined): AccountsState
   }
   for (const fund of rmb) {
     if (!isNavFundAccount(fund)) continue
-    if (!(fund.shares! > 0) || !(fund.cost_amount! > 0)) {
-      const lots = fund.fund_lots ?? []
-      fund.shares = round(
-        lots.reduce((sum, lot) => add(sum, lot.shares), 0),
-        4,
-      )
-      fund.cost_amount = round(
-        lots.reduce((sum, lot) => add(sum, lot.amount), 0),
-        2,
-      )
+    const lots = fund.fund_lots ?? []
+    if (lots.length) {
+      applyFundHoldingsFromLots(fund)
+      continue
     }
     const nav = fund.nav
     const shares = fund.shares

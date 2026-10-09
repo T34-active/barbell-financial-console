@@ -14,6 +14,7 @@ declare module 'vue' {
     AmountInput: typeof import('./components/common/AmountInput.vue')['default']
     BarbellGauge: typeof import('./components/barbell/BarbellGauge.vue')['default']
     CryptoStakeBanner: typeof import('./components/summary/CryptoStakeBanner.vue')['default']
+    ElAutocomplete: typeof import('element-plus/es')['ElAutocomplete']
     ElButton: typeof import('element-plus/es')['ElButton']
     ElConfigProvider: typeof import('element-plus/es')['ElConfigProvider']
     ElDatePicker: typeof import('element-plus/es')['ElDatePicker']

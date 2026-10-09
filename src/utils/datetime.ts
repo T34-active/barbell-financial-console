@@ -105,6 +105,37 @@ export function formatMonthDay(ymd: string): string {
   return `${Number(match[2])}-${Number(match[3])}`
 }
 
+/** 北京墙钟 YYYY-MM-DD HH:mm，给日期时间选择器当默认值 */
+export function nowBeijingDateTime(now = dayjs().toDate()): string {
+  const c = beijingClock(now)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${c.dateKey} ${pad(c.hour)}:${pad(c.minute)}`
+}
+
+/** 解析申购时间：墙钟字符串按北京时间，ISO 按瞬时 */
+export function parseBeijingDateTime(value: string | Date): Date {
+  if (value instanceof Date) return value
+  const trimmed = value.trim()
+  if (!trimmed) return dayjs().toDate()
+  if (/T|[zZ]|[+-]\d{2}:\d{2}$/.test(trimmed)) {
+    const instant = dayjs(trimmed)
+    if (instant.isValid()) return instant.toDate()
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(trimmed)
+  if (match) {
+    return beijingWallTime(
+      match[1],
+      match[2],
+      match[3],
+      Number(match[4] ?? 0),
+      Number(match[5] ?? 0),
+      Number(match[6] ?? 0),
+    )
+  }
+  const fallback = dayjs(trimmed)
+  return fallback.isValid() ? fallback.toDate() : dayjs().toDate()
+}
+
 /** Element Plus disabled-date：禁用晚于北京时间今天的日历日 */
 export function isFutureBeijingDate(d: Date): boolean {
   return dayjs(d).format('YYYY-MM-DD') > todayBeijingDate()

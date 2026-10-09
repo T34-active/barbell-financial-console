@@ -12,7 +12,8 @@ import { useFinanceFormat } from '@/composables/useFinanceFormat'
 import { quoteToneClass } from '@/composables/useQuoteColor'
 import { formatMoney, formatPercent, stockCostBasis, stockMarketValue } from '@/utils/currency'
 import { add, div, mul, round, sub } from '@/utils/decimal'
-import { isNavFundAccount, lookupFund, type FundProfile } from '@/utils/fund-nav'
+import { isNavFundAccount, searchFunds, type FundProfile } from '@/utils/fund-nav'
+import { lookupStock, searchUsStocks, type StockProfile } from '@/utils/stock-prices'
 import { findHkBank, hkBankLegacyIds, hkBanks } from '@/data/hk-banks'
 import type { PoolAccount, UsStockHolding } from '@/types/finance'
 
@@ -82,13 +83,11 @@ const fundForm = ref({
   name: '',
   fundCode: '',
 })
+const fundQuery = ref('')
 const fundLookup = ref<FundProfile | null>(null)
-const fundLookupError = ref('')
 const fundLookingUp = ref(false)
 const fundSaving = ref(false)
-/** 最近一次查询自动填入的名称；用户没改过就随新结果替换 */
-const fundNameFromLookup = ref('')
-let fundLookupSeq = 0
+let fundSuggestSeq = 0
 const editDialogVisible = ref(false)
 const editingStock = ref<UsStockHolding | null>(null)
 const editShares = ref(0)
@@ -122,6 +121,11 @@ const stockForm = ref({
   shares: 1,
   costPrice: 0,
 })
+const stockQuery = ref('')
+const stockLookup = ref<StockProfile | null>(null)
+const stockLookingUp = ref(false)
+const stockSaving = ref(false)
+let stockSuggestSeq = 0
 
 /** 美股持仓盈亏合计（USD） */
 const usHoldingPnl = computed(() => {
@@ -273,29 +277,114 @@ async function removeHkd(account: PoolAccount) {
   }
 }
 
+interface StockSuggestItem extends StockProfile {
+  value: string
+}
+
+interface FundSuggestItem extends FundProfile {
+  value: string
+}
+
 function openAddStock() {
   stockForm.value = { symbol: '', name: '', shares: 1, costPrice: 0 }
+  stockQuery.value = ''
+  stockLookup.value = null
+  stockLookingUp.value = false
   addStockVisible.value = true
 }
 
-function saveAddStock() {
+function applyStockPick(hit: StockProfile) {
+  stockForm.value.symbol = hit.symbol
+  stockForm.value.name = hit.name
+  stockLookup.value = hit
+  stockQuery.value = `${hit.symbol} ${hit.name}`
+}
+
+async function queryStockSuggestions(query: string, cb: (items: StockSuggestItem[]) => void) {
+  const key = query.trim()
+  const seq = ++stockSuggestSeq
+  if (!key) {
+    stockLookingUp.value = false
+    cb([])
+    return
+  }
+  stockLookingUp.value = true
   try {
-    const symbol = stockForm.value.symbol.trim().toUpperCase()
-    if (!symbol) throw new Error('请填写股票代码')
-    const name = stockForm.value.name.trim() || symbol
+    const list = await searchUsStocks(key)
+    if (seq !== stockSuggestSeq) return
+    cb(
+      list.map((item) => ({
+        ...item,
+        value: `${item.symbol} ${item.name}`,
+      })),
+    )
+  } catch {
+    if (seq !== stockSuggestSeq) return
+    cb([])
+  } finally {
+    if (seq === stockSuggestSeq) stockLookingUp.value = false
+  }
+}
+
+function onStockSuggestSelect(item: Record<string, unknown>) {
+  const symbol = String(item.symbol ?? '').toUpperCase()
+  const name = String(item.name ?? '').trim()
+  if (!symbol || !name) return
+  applyStockPick({
+    symbol,
+    name,
+    exchange: typeof item.exchange === 'string' ? item.exchange : undefined,
+    price: typeof item.price === 'number' ? item.price : undefined,
+  })
+}
+
+watch(stockQuery, (query) => {
+  const selected = stockLookup.value
+  if (!selected) return
+  const label = `${selected.symbol} ${selected.name}`
+  if (query.trim() !== label && query.trim().toUpperCase() !== selected.symbol) {
+    stockLookup.value = null
+    stockForm.value.symbol = ''
+    stockForm.value.name = ''
+  }
+})
+
+const stockReady = computed(() => stockLookup.value != null)
+
+const stockLookupHint = computed(() => {
+  const hit = stockLookup.value
+  if (!hit) return ''
+  return [hit.symbol, hit.name, hit.exchange].filter(Boolean).join(' · ')
+})
+
+async function saveAddStock() {
+  const selected = stockLookup.value
+  if (stockSaving.value || !selected) return
+  stockSaving.value = true
+  try {
+    let price = selected.price
+    try {
+      const live = await lookupStock(selected.symbol)
+      if (live.price && live.price > 0) price = live.price
+    } catch {
+      /* 候选已选中，现价失败仍可按持仓价入账 */
+    }
+    const name = stockForm.value.name.trim() || selected.name
     store.upsertStock({
-      id: symbol.toLowerCase(),
-      symbol,
+      id: selected.symbol.toLowerCase(),
+      symbol: selected.symbol,
       name,
       shares: stockForm.value.shares,
       cost_price: stockForm.value.costPrice,
       currency: 'USD',
-      market_price: stockForm.value.costPrice,
+      market_price: price && price > 0 ? price : stockForm.value.costPrice,
     })
     addStockVisible.value = false
-    ElMessage.success(`已添加 ${symbol}`)
+    ElMessage.success(`已添加 ${name}（${selected.symbol}）`)
   } catch (error) {
     if (error instanceof Error) ElMessage.error(error.message)
+  } finally {
+    stockSaving.value = false
   }
 }
 
@@ -334,96 +423,91 @@ async function refreshQuotes() {
   }
 }
 
-function resetFundLookup() {
-  fundLookupSeq += 1
-  fundLookup.value = null
-  fundLookupError.value = ''
-  fundLookingUp.value = false
-  fundNameFromLookup.value = ''
-}
-
 function openAddFund() {
   fundForm.value = { name: '', fundCode: '' }
-  resetFundLookup()
+  fundQuery.value = ''
+  fundLookup.value = null
+  fundLookingUp.value = false
   addFundVisible.value = true
 }
 
-function onFundCodeInput(value: string | number) {
-  fundForm.value.fundCode = String(value).replace(/\D/g, '').slice(0, 6)
+function applyFundPick(hit: FundProfile) {
+  fundForm.value.fundCode = hit.fund_code
+  fundForm.value.name = hit.name
+  fundLookup.value = hit
+  fundQuery.value = `${hit.fund_code} ${hit.name}`
 }
 
-function clearAutoFundName() {
-  if (!fundForm.value.name.trim() || fundForm.value.name === fundNameFromLookup.value) {
-    fundForm.value.name = ''
-    fundNameFromLookup.value = ''
+async function queryFundSuggestions(query: string, cb: (items: FundSuggestItem[]) => void) {
+  const key = query.trim()
+  const seq = ++fundSuggestSeq
+  if (!key) {
+    fundLookingUp.value = false
+    cb([])
+    return
+  }
+  fundLookingUp.value = true
+  try {
+    const list = await searchFunds(key)
+    if (seq !== fundSuggestSeq) return
+    cb(
+      list.map((item) => ({
+        ...item,
+        value: `${item.fund_code} ${item.name}`,
+      })),
+    )
+  } catch {
+    if (seq !== fundSuggestSeq) return
+    cb([])
+  } finally {
+    if (seq === fundSuggestSeq) fundLookingUp.value = false
   }
 }
 
-const fundReady = computed(
-  () => fundLookup.value != null && fundLookup.value.fund_code === fundForm.value.fundCode.trim(),
-)
+function onFundSuggestSelect(item: Record<string, unknown>) {
+  const fundCode = String(item.fund_code ?? '').trim()
+  const name = String(item.name ?? '').trim()
+  if (!fundCode || !name) return
+  applyFundPick({
+    fund_code: fundCode,
+    name,
+    fund_type: typeof item.fund_type === 'string' ? item.fund_type : undefined,
+    company: typeof item.company === 'string' ? item.company : undefined,
+  })
+}
+
+watch(fundQuery, (query) => {
+  const selected = fundLookup.value
+  if (!selected) return
+  const label = `${selected.fund_code} ${selected.name}`
+  if (query.trim() !== label && query.trim() !== selected.fund_code) {
+    fundLookup.value = null
+    fundForm.value.fundCode = ''
+    fundForm.value.name = ''
+  }
+})
+
+const fundReady = computed(() => fundLookup.value != null)
 
 const fundLookupHint = computed(() => {
   const hit = fundLookup.value
   if (!hit) return ''
-  return [hit.name, hit.fund_type, hit.company].filter(Boolean).join(' · ')
+  return [hit.fund_code, hit.name, hit.fund_type, hit.company].filter(Boolean).join(' · ')
 })
 
-watch(
-  () => fundForm.value.fundCode,
-  async (raw) => {
-    const code = raw.trim()
-    const seq = ++fundLookupSeq
-    fundLookup.value = null
-    fundLookupError.value = ''
-    clearAutoFundName()
-    if (!/^\d{6}$/.test(code)) {
-      fundLookingUp.value = false
-      return
-    }
-    fundLookingUp.value = true
-    try {
-      const hit = await lookupFund(code)
-      if (seq !== fundLookupSeq) return
-      fundLookup.value = hit
-      const current = fundForm.value.name.trim()
-      if (!current || current === fundNameFromLookup.value) {
-        fundForm.value.name = hit.name
-        fundNameFromLookup.value = hit.name
-      }
-    } catch (error) {
-      if (seq !== fundLookupSeq) return
-      fundLookupError.value = error instanceof Error ? error.message : '基金查询失败'
-    } finally {
-      if (seq === fundLookupSeq) fundLookingUp.value = false
-    }
-  },
-)
-
 async function saveAddFund() {
-  if (fundSaving.value || fundLookingUp.value) return
+  const selected = fundLookup.value
+  if (fundSaving.value || !selected) return
   fundSaving.value = true
   try {
-    const hit = await lookupFund(fundForm.value.fundCode)
-    fundLookup.value = hit
-    fundLookupError.value = ''
     const account = store.addFundProduct({
-      name: fundForm.value.name.trim() || hit.name,
-      fundCode: hit.fund_code,
+      name: fundForm.value.name.trim() || selected.name,
+      fundCode: selected.fund_code,
     })
     addFundVisible.value = false
     ElMessage.success(`已添加基金：${account.name}（${account.fund_code}）`)
   } catch (error) {
-    const message = error instanceof Error ? error.message : '添加基金失败'
-    const lookupRejected =
-      message.startsWith('未找到基金') ||
-      message.startsWith('基金查询失败') ||
-      message.startsWith('基金代码')
-    if (lookupRejected) {
-      fundLookup.value = null
-      fundLookupError.value = message
-    }
-    ElMessage.error(message)
+    if (error instanceof Error) ElMessage.error(error.message)
   } finally {
     fundSaving.value = false
   }
@@ -519,7 +603,6 @@ function saveRmbAmount(id: string, amount: number) {
     if (error instanceof Error) ElMessage.error(error.message)
   }
 }
-
 </script>
 
 <template>
@@ -590,11 +673,7 @@ function saveRmbAmount(id: string, amount: number) {
         <div class="space-y-4">
           <div>
             <label class="mb-1 block text-xs text-ink-muted">银行名称</label>
-            <el-input
-              v-model="rmbForm.name"
-              placeholder="例如：招商银行、余额宝"
-              maxlength="32"
-            />
+            <el-input v-model="rmbForm.name" placeholder="例如：招商银行、余额宝" maxlength="32" />
           </div>
           <div v-if="!rmbEditingId">
             <label class="mb-1 block text-xs text-ink-muted">初始余额（CNY）</label>
@@ -735,33 +814,38 @@ function saveRmbAmount(id: string, amount: number) {
       >
         <div class="space-y-4">
           <div>
-            <label class="mb-1 block text-xs text-ink-muted">基金代码（6 位）</label>
-            <el-input
-              :model-value="fundForm.fundCode"
-              placeholder="例如：005827"
-              maxlength="6"
-              inputmode="numeric"
-              @update:model-value="onFundCodeInput"
-            />
-            <p v-if="fundLookingUp" class="mt-1 text-xs text-ink-muted">正在联网查询…</p>
-            <p v-else-if="fundLookup" class="mt-1 text-xs text-safe">已匹配 {{ fundLookupHint }}</p>
-            <p v-else-if="fundLookupError" class="mt-1 text-xs text-alert">{{ fundLookupError }}</p>
-            <p v-else class="mt-1 text-xs text-ink-muted">输入完整代码后自动查询，查不到不能添加</p>
+            <label class="mb-1 block text-xs text-ink-muted">搜索基金</label>
+            <el-autocomplete
+              v-model="fundQuery"
+              :fetch-suggestions="queryFundSuggestions"
+              :debounce="300"
+              :trigger-on-focus="false"
+              highlight-first-item
+              placeholder="代码或名称，如 002611 / 黄金"
+              class="w-full!"
+              @select="onFundSuggestSelect"
+            >
+              <template #default="{ item }">
+                <div class="flex min-w-0 items-center justify-between gap-3">
+                  <span class="font-mono">{{ item.fund_code }}</span>
+                  <span class="truncate text-ink-muted">{{ item.name }}</span>
+                </div>
+              </template>
+            </el-autocomplete>
+            <p v-if="fundLookingUp" class="mt-1 text-xs text-ink-muted">正在搜索…</p>
+            <p v-else-if="fundLookup" class="mt-1 text-xs text-safe">已选 {{ fundLookupHint }}</p>
+            <p v-else class="mt-1 text-xs text-ink-muted">输入后从候选里点选，方向键 + 回车也可</p>
           </div>
           <div>
-            <label class="mb-1 block text-xs text-ink-muted">基金名称</label>
-            <el-input
-              v-model="fundForm.name"
-              placeholder="查询成功后自动填入，可改"
-              maxlength="48"
-            />
+            <label class="mb-1 block text-xs text-ink-muted">基金名称（可改）</label>
+            <el-input v-model="fundForm.name" placeholder="选中候选后自动填入" maxlength="48" />
           </div>
         </div>
         <template #footer>
           <el-button @click="addFundVisible = false">取消</el-button>
           <el-button
             type="primary"
-            :loading="fundSaving || fundLookingUp"
+            :loading="fundSaving"
             :disabled="!fundReady"
             @click="saveAddFund"
           >
@@ -905,17 +989,31 @@ function saveRmbAmount(id: string, amount: number) {
       >
         <div class="space-y-4">
           <div>
-            <label class="mb-1 block text-xs text-ink-muted">股票代码</label>
-            <el-input
-              v-model="stockForm.symbol"
-              placeholder="例如：AAPL"
-              maxlength="12"
-              class="font-mono"
-            />
+            <label class="mb-1 block text-xs text-ink-muted">搜索美股</label>
+            <el-autocomplete
+              v-model="stockQuery"
+              :fetch-suggestions="queryStockSuggestions"
+              :debounce="300"
+              :trigger-on-focus="false"
+              highlight-first-item
+              placeholder="代码或名称，如 AAPL / 苹果"
+              class="w-full!"
+              @select="onStockSuggestSelect"
+            >
+              <template #default="{ item }">
+                <div class="flex min-w-0 items-center justify-between gap-3">
+                  <span class="font-mono">{{ item.symbol }}</span>
+                  <span class="truncate text-ink-muted">{{ item.name }}</span>
+                </div>
+              </template>
+            </el-autocomplete>
+            <p v-if="stockLookingUp" class="mt-1 text-xs text-ink-muted">正在搜索…</p>
+            <p v-else-if="stockLookup" class="mt-1 text-xs text-safe">已选 {{ stockLookupHint }}</p>
+            <p v-else class="mt-1 text-xs text-ink-muted">输入后从候选里点选，方向键 + 回车也可</p>
           </div>
           <div>
-            <label class="mb-1 block text-xs text-ink-muted">名称（可选）</label>
-            <el-input v-model="stockForm.name" placeholder="例如：苹果" maxlength="32" />
+            <label class="mb-1 block text-xs text-ink-muted">名称（可改）</label>
+            <el-input v-model="stockForm.name" placeholder="选中候选后自动填入" maxlength="48" />
           </div>
           <div>
             <label class="mb-1 block text-xs text-ink-muted">数量（股）</label>
@@ -936,7 +1034,14 @@ function saveRmbAmount(id: string, amount: number) {
         </div>
         <template #footer>
           <el-button @click="addStockVisible = false">取消</el-button>
-          <el-button type="primary" @click="saveAddStock">添加</el-button>
+          <el-button
+            type="primary"
+            :loading="stockSaving"
+            :disabled="!stockReady"
+            @click="saveAddStock"
+          >
+            添加
+          </el-button>
         </template>
       </el-dialog>
 

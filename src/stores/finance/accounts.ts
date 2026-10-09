@@ -1,8 +1,14 @@
 import dayjs from 'dayjs'
 import type { FundLot, PoolAccount, PoolKey, UsStockHolding } from '@/types/finance'
-import { todayBeijingDate } from '@/utils/datetime'
+import { parseBeijingDateTime } from '@/utils/datetime'
 import { add, div, mul, round, sub } from '@/utils/decimal'
 import { isNavFundAccount } from '@/utils/fund-nav'
+import {
+  applyFundHoldingsFromLots,
+  findPublishedNav,
+  isPendingFundLot,
+  resolveFundBuySettlement,
+} from '@/utils/fund-trade'
 import type { FinanceRefs } from './state'
 
 export function createAccounts(
@@ -80,8 +86,7 @@ export function createAccounts(
     else list.push(next)
 
     // 港币池、人民币现金/银行账户默认计入安全端
-    const isRmbCash =
-      pool === 'rmb_pool' && next.type !== 'fund' && next.type !== 'gold'
+    const isRmbCash = pool === 'rmb_pool' && next.type !== 'fund' && next.type !== 'gold'
     if (pool === 'hkd_pool' || isRmbCash) {
       ensureClassId(settings.value.asset_classification.safe_assets, id)
       if (pool === 'rmb_pool') {
@@ -140,42 +145,21 @@ export function createAccounts(
     return fund
   }
 
-  /** 按加仓明细重算份额/成本/市值/浮盈 */
+  /** 按加仓明细重算份额/成本/市值/浮盈（在途金额按 1:1 暂估） */
   function syncFundFromLots(fund: PoolAccount) {
-    const lots = fund.fund_lots ?? []
-    const shares = round(
-      lots.reduce((sum, lot) => add(sum, lot.shares), 0),
-      4,
-    )
-    const cost = round(
-      lots.reduce((sum, lot) => add(sum, lot.amount), 0),
-      2,
-    )
-    fund.shares = shares
-    fund.cost_amount = cost
-    const nav = fund.nav
-    if (nav != null && nav > 0 && shares > 0) {
-      fund.amount = round(mul(shares, nav), 2)
-    } else {
-      fund.amount = cost
-    }
-    if (cost > 0) {
-      fund.profit_rate = round(div(sub(fund.amount, cost), cost), 4)
-    } else {
-      fund.profit_rate = 0
-      fund.amount = 0
-    }
+    applyFundHoldingsFromLots(fund)
     fund.amount_updated_at = dayjs().toISOString()
   }
 
   /**
-   * 基金加仓：金额 ÷ 确认净值 = 份额，写入 fund_lots。
-   * confirmNav 缺省时用当前最新净值。
+   * 基金加仓：按申购时间 15:00 切日得到净值日。
+   * 该日净值已公布则立刻确认份额，否则记在途，刷新净值后再回填。
    */
   function addFundLot(
     accountId: string,
     input: {
       amount: number
+      applyAt?: string | Date
       confirmNav?: number
       confirmDate?: string
       note?: string
@@ -184,24 +168,27 @@ export function createAccounts(
     const fund = getFundAccount(accountId)
     const amount = round(input.amount, 2)
     if (!(amount > 0)) throw new Error('加仓金额须大于 0')
-    const confirmNav = round(input.confirmNav ?? fund.nav ?? 0, 4)
-    if (!(confirmNav > 0)) throw new Error('请填写确认净值（或先刷新最新净值）')
-    const shares = round(div(amount, confirmNav), 4)
-    if (!(shares > 0)) throw new Error('计算出的份额无效')
-    const confirmDate = input.confirmDate?.trim() || todayBeijingDate()
+    const applyAtRaw = parseBeijingDateTime(input.applyAt ?? dayjs().toISOString())
+    const applyAt = applyAtRaw.getTime() > Date.now() ? new Date() : applyAtRaw
+    const settlement = resolveFundBuySettlement(applyAt)
+    const confirmDate = input.confirmDate?.trim() || settlement.navDate
     if (!/^\d{4}-\d{2}-\d{2}$/.test(confirmDate)) {
-      throw new Error('确认日格式无效')
+      throw new Error('净值日格式无效')
     }
-    if (confirmDate > todayBeijingDate()) {
-      throw new Error('确认日不能选择未来日期')
-    }
+    const publishedNav = findPublishedNav(fund, confirmDate)
+    const confirmNav = round(input.confirmNav ?? publishedNav, 4)
+    const pending = !(confirmNav > 0)
+    const shares = pending ? 0 : round(div(amount, confirmNav), 4)
+    if (!pending && !(shares > 0)) throw new Error('计算出的份额无效')
     const lot: FundLot = {
       id: `lot_${confirmDate.replace(/-/g, '')}_${Date.now().toString(36)}`,
       confirm_date: confirmDate,
       amount,
-      confirm_nav: confirmNav,
+      confirm_nav: pending ? 0 : confirmNav,
       shares,
       note: input.note?.trim() || undefined,
+      apply_at: applyAt.toISOString(),
+      pending: pending || undefined,
     }
     fund.fund_lots = [...(fund.fund_lots ?? []), lot].sort((a, b) =>
       a.confirm_date.localeCompare(b.confirm_date),
@@ -225,7 +212,7 @@ export function createAccounts(
       a.confirm_date.localeCompare(b.confirm_date),
     )
     const totalShares = round(
-      lots.reduce((sum, lot) => add(sum, lot.shares), 0),
+      lots.filter((lot) => !isPendingFundLot(lot)).reduce((sum, lot) => add(sum, lot.shares), 0),
       4,
     )
     if (sellShares > totalShares + 1e-8) {
@@ -236,6 +223,10 @@ export function createAccounts(
     let costRemoved = 0
     const nextLots: FundLot[] = []
     for (const lot of lots) {
+      if (isPendingFundLot(lot)) {
+        nextLots.push(lot)
+        continue
+      }
       if (remain <= 1e-8) {
         nextLots.push(lot)
         continue
@@ -275,6 +266,7 @@ export function createAccounts(
 
   function addGoldFundLot(input: {
     amount: number
+    applyAt?: string | Date
     confirmNav?: number
     confirmDate?: string
     note?: string

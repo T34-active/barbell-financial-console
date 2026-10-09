@@ -35,7 +35,7 @@ export function derivePrevNav(nav: number, dayChange?: number): number {
  * 更早持仓按 份额 × (最新净值 − 上日净值)。
  */
 export function lotDailyPnl(lot: FundLot, nav: number, prevNav: number, asOf: string): number {
-  if (!(lot.shares > 0) || !(nav > 0) || !asOf) return 0
+  if (lot.pending || !(lot.shares > 0) || !(nav > 0) || !asOf) return 0
   if (lot.confirm_date > asOf) return 0
   if (lot.confirm_date === asOf) {
     return round(mul(lot.shares, sub(nav, lot.confirm_nav)), 2)
@@ -196,19 +196,14 @@ interface FundSearchResponse {
   Datas?: FundSearchHit[]
 }
 
-/**
- * 按 6 位代码联网核对公募基金。
- * 检索是模糊匹配，必须 CODE 与 FundBaseInfo.FCODE 都等于输入，否则视为无效代码。
- */
-export async function lookupFund(fundCode: string): Promise<FundProfile> {
-  const code = fundCode.trim()
-  if (!/^\d{6}$/.test(code)) {
-    throw new Error('基金代码须为 6 位数字')
-  }
+function stripHtml(text: string): string {
+  return text.replace(/<[^>]*>/g, '').trim()
+}
 
+async function fetchFundSearch(query: string): Promise<FundSearchHit[]> {
   const url =
     `${fundSuggestBaseUrl()}/FundSearch/api/FundSearchAPI.ashx` +
-    `?m=1&key=${encodeURIComponent(code)}`
+    `?m=1&key=${encodeURIComponent(query)}`
 
   let json: FundSearchResponse
   try {
@@ -223,17 +218,47 @@ export async function lookupFund(fundCode: string): Promise<FundProfile> {
     const msg = error instanceof Error ? error.message : String(error)
     throw new Error(`基金查询失败: ${msg}`)
   }
+  return json.Datas ?? []
+}
 
-  const hit = (json.Datas ?? []).find(
-    (item) => item.CODE === code && item.FundBaseInfo?.FCODE === code,
-  )
-  const name = (hit?.FundBaseInfo?.SHORTNAME || hit?.NAME || '').trim()
-  if (!hit || !name) throw new Error(`未找到基金 ${code}，请核对代码`)
-
+function mapFundHit(item: FundSearchHit): FundProfile | null {
+  const code = (item.FundBaseInfo?.FCODE || item.CODE || '').trim()
+  if (!/^\d{6}$/.test(code)) return null
+  const name = stripHtml(item.FundBaseInfo?.SHORTNAME || item.NAME || '')
+  if (!name) return null
   return {
     fund_code: code,
     name,
-    fund_type: hit.FundBaseInfo?.FTYPE?.trim() || undefined,
-    company: hit.FundBaseInfo?.JJGS?.trim() || undefined,
+    fund_type: item.FundBaseInfo?.FTYPE?.trim() || undefined,
+    company: item.FundBaseInfo?.JJGS?.trim() || undefined,
   }
+}
+
+/** 按代码或名称模糊检索公募基金，供候选列表 */
+export async function searchFunds(query: string): Promise<FundProfile[]> {
+  const key = query.trim()
+  if (!key) return []
+  const hits = await fetchFundSearch(key)
+  const seen = new Set<string>()
+  const list: FundProfile[] = []
+  for (const item of hits) {
+    const fund = mapFundHit(item)
+    if (!fund || seen.has(fund.fund_code)) continue
+    seen.add(fund.fund_code)
+    list.push(fund)
+  }
+  return list
+}
+
+/**
+ * 按 6 位代码联网核对公募基金。
+ */
+export async function lookupFund(fundCode: string): Promise<FundProfile> {
+  const code = fundCode.trim()
+  if (!/^\d{6}$/.test(code)) {
+    throw new Error('基金代码须为 6 位数字')
+  }
+  const hit = (await searchFunds(code)).find((item) => item.fund_code === code)
+  if (!hit) throw new Error(`未找到基金 ${code}，请核对代码`)
+  return hit
 }
