@@ -79,9 +79,14 @@ export function createAccounts(
     if (index >= 0) list[index] = { ...list[index], ...next }
     else list.push(next)
 
-    // 港币池默认计入安全端
-    if (pool === 'hkd_pool') {
+    // 港币池、人民币现金/银行账户默认计入安全端
+    const isRmbCash =
+      pool === 'rmb_pool' && next.type !== 'fund' && next.type !== 'gold'
+    if (pool === 'hkd_pool' || isRmbCash) {
       ensureClassId(settings.value.asset_classification.safe_assets, id)
+      if (pool === 'rmb_pool') {
+        dropClassId(settings.value.asset_classification.neutral_assets, id)
+      }
     }
   }
 

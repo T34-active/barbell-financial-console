@@ -19,6 +19,7 @@ import {
 } from '@/utils/finance-cloud'
 import {
   alignNeutralFundClassification,
+  alignPoolClassification,
   clonePlain,
   cloneSeed,
   normalizeAccounts,
@@ -125,6 +126,7 @@ export function createPersistence(
 
     settings.value = normalizeSettings(nextSettings)
     accounts.value = normalizeAccounts(nextAccounts)
+    alignPoolClassification(settings.value, accounts.value)
     alignNeutralFundClassification(settings.value, accounts.value)
     yuanGou.value = normalizeYuanGou(nextYuanGou)
     cryptoOps.value = normalizeCryptoOps(nextCryptoOps)
@@ -196,6 +198,7 @@ export function createPersistence(
   function hydrateLegacyState() {
     settings.value = normalizeSettings(settings.value)
     accounts.value = normalizeAccounts(accounts.value)
+    alignPoolClassification(settings.value, accounts.value)
     alignNeutralFundClassification(settings.value, accounts.value)
     yuanGou.value = normalizeYuanGou(yuanGou.value)
     cryptoOps.value = normalizeCryptoOps(cryptoOps.value)

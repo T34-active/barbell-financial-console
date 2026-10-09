@@ -42,15 +42,10 @@ export function normalizeSettings(raw: AppSettings | undefined): AppSettings {
   const cryptoAssets = [
     ...(raw.asset_classification?.crypto_assets ?? seed.asset_classification.crypto_assets),
   ]
-  for (const id of ['htx_earn_usdt', 'okx_earn_usdt'] as const) {
-    if (!cryptoAssets.includes(id)) cryptoAssets.push(id)
-  }
 
   const safeAssets = [
     ...(raw.asset_classification?.safe_assets ?? seed.asset_classification.safe_assets),
   ]
-  if (!safeAssets.includes('boc')) safeAssets.push('boc')
-  if (!safeAssets.includes('starryblu')) safeAssets.push('starryblu')
 
   return {
     ...seed,
@@ -74,21 +69,16 @@ export function normalizeSettings(raw: AppSettings | undefined): AppSettings {
   }
 }
 
+/** 已保存的池按用户数据保留；种子账户被删掉后刷新不再补回。缺字段才用种子。 */
+function savedPoolOrSeed<T>(saved: T[] | undefined, seed: T[]): T[] {
+  return Array.isArray(saved) ? clonePlain(saved) : clonePlain(seed)
+}
+
 export function normalizeAccounts(raw: AccountsState | undefined): AccountsState {
   const seed = cloneSeed().accounts
   if (!raw) return seed
-  const crypto = raw.crypto_pool?.length ? [...raw.crypto_pool] : []
-  for (const item of seed.crypto_pool) {
-    if (!crypto.some((c) => c.id === item.id)) {
-      crypto.push(clonePlain(item))
-    }
-  }
-  const hkd = raw.hkd_pool?.length ? clonePlain(raw.hkd_pool) : []
-  for (const item of seed.hkd_pool) {
-    if (!hkd.some((a) => a.id === item.id)) {
-      hkd.push(clonePlain(item))
-    }
-  }
+  const crypto = savedPoolOrSeed(raw.crypto_pool, seed.crypto_pool)
+  const hkd = savedPoolOrSeed(raw.hkd_pool, seed.hkd_pool)
   const zabank = hkd.find((item) => item.id === 'zabank')
   if (zabank && zabank.yield_rate == null) {
     zabank.yield_rate = 0.003
@@ -128,10 +118,37 @@ export function normalizeAccounts(raw: AccountsState | undefined): AccountsState
 
   return {
     rmb_pool: rmb,
-    hkd_pool: hkd.length ? hkd : seed.hkd_pool,
+    hkd_pool: hkd,
     us_stock_pool: raw.us_stock_pool ?? seed.us_stock_pool,
     crypto_pool: crypto,
   }
+}
+
+const SEEDED_HKD_IDS = new Set(['hsbc', 'zabank', 'boc', 'starryblu'])
+const SEEDED_CRYPTO_IDS = new Set(['htx_earn_usdt', 'okx_earn_usdt'])
+
+/** 种子账户还在池里才留在分类名单；用户删掉的不再补回 */
+function alignSeededClassIds(list: string[], seededIds: Set<string>, aliveIds: Set<string>) {
+  const next = list.filter((id) => !seededIds.has(id) || aliveIds.has(id))
+  for (const id of seededIds) {
+    if (aliveIds.has(id) && !next.includes(id)) next.push(id)
+  }
+  return next
+}
+
+export function alignPoolClassification(settings: AppSettings, accounts: AccountsState) {
+  const hkdIds = new Set(accounts.hkd_pool.map((item) => item.id))
+  const cryptoIds = new Set(accounts.crypto_pool.map((item) => item.id))
+  settings.asset_classification.safe_assets = alignSeededClassIds(
+    settings.asset_classification.safe_assets,
+    SEEDED_HKD_IDS,
+    hkdIds,
+  )
+  settings.asset_classification.crypto_assets = alignSeededClassIds(
+    settings.asset_classification.crypto_assets ?? [],
+    SEEDED_CRYPTO_IDS,
+    cryptoIds,
+  )
 }
 
 /** 净值基金只进中性端；黄金账户已删除时不再把 gold_etf 补回去 */

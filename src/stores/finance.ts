@@ -129,6 +129,7 @@ export const useFinanceStore = defineStore(
       updateYuanGouDailyCost: yuanGouApi.updateYuanGouDailyCost,
       fundSourceLabel: loansApi.fundSourceLabel,
       lendOut: loansApi.lendOut,
+      updateLoan: loansApi.updateLoan,
       repayLoan: loansApi.repayLoan,
       writeOffLoan: loansApi.writeOffLoan,
       resetToSeed: persistence.resetToSeed,

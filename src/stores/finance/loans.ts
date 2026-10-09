@@ -103,6 +103,41 @@ export function createLoans(
     return record
   }
 
+  /** 修改借出资料。未还款的进行中记录可以改本金，差额从原扣款账户补扣或退回。 */
+  function updateLoan(input: {
+    id: string
+    counterparty: string
+    due_at: string
+    lent_at?: string
+    note?: string
+    amount?: number
+  }) {
+    const loan = loans.value.items.find((item) => item.id === input.id)
+    if (!loan) throw new Error('未找到借出记录')
+    const counterparty = String(input.counterparty || '').trim()
+    if (!counterparty) throw new Error('请填写借款人')
+    const dueAt = String(input.due_at || '').trim()
+    if (!dueAt) throw new Error('请填写约定还款日')
+    const lentAt = String(input.lent_at || loan.lent_at).trim() || loan.lent_at
+
+    const canEditAmount = loan.status === 'open' && loan.repayments.length === 0
+    if (input.amount != null && canEditAmount) {
+      const nextAmount = round(Number(input.amount) || 0, 2)
+      if (!(nextAmount > 0)) throw new Error('借出金额必须大于 0')
+      const delta = round(sub(nextAmount, loan.amount), 2)
+      if (delta > 0) debitLoanSource(loan.funded_from, delta)
+      else if (delta < 0) creditLoanSource(loan.funded_from, Math.abs(delta))
+      loan.amount = nextAmount
+      loan.remaining = nextAmount
+    }
+
+    loan.counterparty = counterparty
+    loan.due_at = dueAt
+    loan.lent_at = lentAt
+    loan.note = String(input.note || '').trim()
+    return loan
+  }
+
   /** 收回借出：部分或全部 */
   function repayLoan(input: {
     id: string
@@ -159,6 +194,7 @@ export function createLoans(
     openLendReceivableValue,
     fundSourceLabel,
     lendOut,
+    updateLoan,
     repayLoan,
     writeOffLoan,
   }
