@@ -20,16 +20,25 @@ const props = withDefaults(
     editableYield?: boolean
     /** 是否显示删除 */
     removable?: boolean
+    /** 是否允许修改名称 */
+    renamable?: boolean
     /** 可转出的其他账户（港币池内） */
     transferTargets?: PoolAccount[]
   }>(),
-  { editable: false, editableYield: false, removable: false, transferTargets: () => [] },
+  {
+    editable: false,
+    editableYield: false,
+    removable: false,
+    renamable: false,
+    transferTargets: () => [],
+  },
 )
 
 const emit = defineEmits<{
   saveAmount: [amount: number]
   saveYield: [yieldRate: number]
   remove: []
+  rename: []
   transfer: [payload: { toId: string; amount: number; received?: number }]
 }>()
 
@@ -182,6 +191,7 @@ function saveYield() {
         >
           {{ account.id }}
         </span>
+        <el-button v-if="renamable" size="small" plain @click="emit('rename')">修改</el-button>
         <el-button v-if="removable" size="small" type="danger" plain @click="emit('remove')">
           删除
         </el-button>

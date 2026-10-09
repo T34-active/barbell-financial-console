@@ -15,6 +15,11 @@ function monthEndKey(base = dayjs()) {
   return dayjs(base).endOf('month').format('YYYY-MM-DD')
 }
 
+const createVisible = ref(false)
+const editVisible = ref(false)
+const showHistory = ref(false)
+const editingId = ref('')
+
 const form = ref({
   counterparty: '',
   amount: 800,
@@ -24,14 +29,15 @@ const form = ref({
   note: '',
 })
 
-const showHistory = ref(false)
-const repayVisible = ref(false)
-const repayTarget = ref<LoanRecord | null>(null)
-const repayForm = ref({
+const editForm = ref({
+  counterparty: '',
   amount: 0,
-  to_account: 'yulibao' as LoanFundSource,
-  repaid_at: todayKey(),
+  lent_at: todayKey(),
+  due_at: monthEndKey(),
   note: '',
+  repayAmount: 0,
+  repayTo: 'yulibao' as LoanFundSource,
+  repaidAt: todayKey(),
 })
 
 const openLoans = computed(() =>
@@ -41,6 +47,16 @@ const openLoans = computed(() =>
 const closedLoans = computed(() =>
   store.loans.items.filter((item) => item.status === 'repaid' || item.status === 'written_off'),
 )
+
+const editingLoan = computed(
+  () => store.loans.items.find((item) => item.id === editingId.value) ?? null,
+)
+
+const canEditAmount = computed(() => {
+  const loan = editingLoan.value
+  if (!loan) return false
+  return loan.status === 'open' && loan.repayments.length === 0
+})
 
 const fundOptions: Array<{ value: LoanFundSource; label: string }> = [
   { value: 'yulibao', label: '余利宝（应急金）' },
@@ -78,6 +94,41 @@ function daysHint(loan: LoanRecord) {
   return `还有 ${diff} 天`
 }
 
+function resetCreateForm() {
+  form.value = {
+    counterparty: '',
+    amount: 800,
+    lent_at: todayKey(),
+    due_at: monthEndKey(),
+    funded_from: 'yulibao',
+    note: '',
+  }
+}
+
+function openCreate() {
+  resetCreateForm()
+  createVisible.value = true
+}
+
+function fillEditForm(loan: LoanRecord) {
+  editForm.value = {
+    counterparty: loan.counterparty,
+    amount: loan.amount,
+    lent_at: loan.lent_at,
+    due_at: loan.due_at,
+    note: loan.note,
+    repayAmount: loan.remaining,
+    repayTo: loan.funded_from,
+    repaidAt: todayKey(),
+  }
+}
+
+function openEdit(loan: LoanRecord) {
+  editingId.value = loan.id
+  fillEditForm(loan)
+  editVisible.value = true
+}
+
 async function submitLend() {
   try {
     const sourceLabel = store.fundSourceLabel(form.value.funded_from)
@@ -94,59 +145,67 @@ async function submitLend() {
       lent_at: form.value.lent_at,
       note: form.value.note,
     })
+    createVisible.value = false
     ElMessage.success(`已借出 ¥${record.amount} 给 ${record.counterparty} · ${record.due_at} 到期`)
-    form.value.counterparty = ''
-    form.value.note = ''
-    form.value.amount = 800
-    form.value.lent_at = todayKey()
-    form.value.due_at = monthEndKey()
-    form.value.funded_from = 'yulibao'
   } catch (error) {
-    if (error instanceof Error && error.message) {
+    if (error instanceof Error && error.message && error.message !== 'cancel') {
       ElMessage.error(error.message)
     }
   }
 }
 
-function openRepay(loan: LoanRecord) {
-  repayTarget.value = loan
-  repayForm.value = {
-    amount: loan.remaining,
-    to_account: loan.funded_from,
-    repaid_at: todayKey(),
-    note: '',
+async function saveEdit() {
+  const loan = editingLoan.value
+  if (!loan) return
+  try {
+    const next = store.updateLoan({
+      id: loan.id,
+      counterparty: editForm.value.counterparty,
+      amount: canEditAmount.value ? editForm.value.amount : undefined,
+      due_at: editForm.value.due_at,
+      lent_at: editForm.value.lent_at,
+      note: editForm.value.note,
+    })
+    fillEditForm(next)
+    ElMessage.success(`已修改 ${next.counterparty}`)
+  } catch (error) {
+    if (error instanceof Error && error.message) ElMessage.error(error.message)
   }
-  repayVisible.value = true
 }
 
 async function submitRepay() {
-  const loan = repayTarget.value
+  const loan = editingLoan.value
   if (!loan) return
   try {
     await ElMessageBox.confirm(
-      `收回 ¥${repayForm.value.amount} 入账「${store.fundSourceLabel(repayForm.value.to_account)}」？`,
+      `收回 ¥${editForm.value.repayAmount} 入账「${store.fundSourceLabel(editForm.value.repayTo)}」？`,
       '确认收款',
       { confirmButtonText: '确认', cancelButtonText: '取消', type: 'success' },
     )
     const next = store.repayLoan({
       id: loan.id,
-      amount: repayForm.value.amount,
-      to_account: repayForm.value.to_account,
-      repaid_at: repayForm.value.repaid_at,
-      note: repayForm.value.note,
+      amount: editForm.value.repayAmount,
+      to_account: editForm.value.repayTo,
+      repaid_at: editForm.value.repaidAt,
     })
-    repayVisible.value = false
+    if (next.status === 'repaid' || next.status === 'written_off') {
+      editVisible.value = false
+    } else {
+      fillEditForm(next)
+    }
     ElMessage.success(
       next.status === 'repaid' ? `${next.counterparty} 已还清` : `已收回，剩余 ¥${next.remaining}`,
     )
   } catch (error) {
-    if (error instanceof Error && error.message) {
+    if (error instanceof Error && error.message && error.message !== 'cancel') {
       ElMessage.error(error.message)
     }
   }
 }
 
-async function submitWriteOff(loan: LoanRecord) {
+async function submitWriteOff() {
+  const loan = editingLoan.value
+  if (!loan) return
   try {
     await ElMessageBox.confirm(
       `核销「${loan.counterparty}」剩余 ¥${loan.remaining}？\n视为收不回，净资产会减少。`,
@@ -157,175 +216,235 @@ async function submitWriteOff(loan: LoanRecord) {
         type: 'error',
       },
     )
+    const remaining = loan.remaining
     store.writeOffLoan(loan.id, '坏账核销')
-    ElMessage.warning(`已核销 ${loan.counterparty} ¥${loan.remaining}`)
+    editVisible.value = false
+    ElMessage.warning(`已核销 ${loan.counterparty} ¥${remaining}`)
   } catch (error) {
-    if (error instanceof Error && error.message) {
+    if (error instanceof Error && error.message && error.message !== 'cancel') {
       ElMessage.error(error.message)
     }
   }
 }
+
+defineExpose({ openCreate })
 </script>
 
 <template>
-  <section class="panel space-y-4 px-4 py-5 md:px-5">
-    <div class="flex flex-wrap items-start justify-between gap-3">
+  <article
+    v-if="!openLoans.length"
+    class="panel flex cursor-pointer flex-col gap-3 px-4 py-4"
+    @click="openCreate"
+  >
+    <div class="flex items-start justify-between gap-3">
       <div>
-        <h2 class="text-base font-semibold">借出 / 应收</h2>
-        <p class="mt-1 text-xs text-ink-muted">
-          借给朋友会扣现金并记应收；还回来再入账。净资产先不变，核销才算损失。
+        <p class="font-medium">借出 / 应收</p>
+        <p class="mt-1 text-xs text-ink-muted">别人欠我的钱，点这里登记</p>
+      </div>
+      <el-button size="small" plain @click.stop="openCreate">登记</el-button>
+    </div>
+    <div>
+      <p class="text-xs text-ink-muted">未收回</p>
+      <p class="stat-num mt-0.5 text-xl font-semibold">
+        {{ formatMoney(store.openLendReceivableCny, 'CNY') }}
+      </p>
+    </div>
+  </article>
+
+  <article
+    v-for="loan in openLoans"
+    :key="loan.id"
+    class="panel flex cursor-pointer flex-col gap-3 px-4 py-4"
+    @click="openEdit(loan)"
+  >
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <p class="font-medium">{{ loan.counterparty }}</p>
+        <p class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-ink-muted">
+          <span>借出 / 应收</span>
+          <span class="rounded px-1.5 py-0.5" :class="statusClass(loan.status)">
+            {{ statusLabel(loan.status) }}
+          </span>
+          <span
+            v-if="isOverdue(loan)"
+            class="rounded bg-alert-soft px-1.5 py-0.5 text-alert"
+          >
+            逾期
+          </span>
         </p>
       </div>
-      <div class="rounded-lg bg-surface px-3 py-2 text-right">
-        <p class="text-xs text-ink-muted">未收回</p>
-        <p class="stat-num text-lg font-semibold text-accent">
-          {{ formatMoney(store.openLendReceivableCny, 'CNY') }}
-        </p>
-      </div>
+      <el-button size="small" plain @click.stop="openEdit(loan)">修改</el-button>
     </div>
-
-    <div class="rounded-lg border border-surface-line bg-surface/60 px-3 py-3">
-      <p class="mb-3 text-sm font-medium">登记借出</p>
-      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <div>
-          <label class="mb-1 block text-xs text-ink-muted">借款人</label>
-          <el-input v-model="form.counterparty" placeholder="朋友姓名" maxlength="32" />
-        </div>
-        <div>
-          <label class="mb-1 block text-xs text-ink-muted">金额（CNY）</label>
-          <AmountInput v-model="form.amount" :min="0.01" class="w-full!" />
-        </div>
-        <div>
-          <label class="mb-1 block text-xs text-ink-muted">扣款来源</label>
-          <el-select v-model="form.funded_from" class="w-full">
-            <el-option
-              v-for="opt in fundOptions"
-              :key="opt.value"
-              :label="opt.label"
-              :value="opt.value"
-            />
-          </el-select>
-        </div>
-        <div>
-          <label class="mb-1 block text-xs text-ink-muted">借出日</label>
-          <el-date-picker
-            v-model="form.lent_at"
-            type="date"
-            value-format="YYYY-MM-DD"
-            class="w-full!"
-          />
-        </div>
-        <div>
-          <label class="mb-1 block text-xs text-ink-muted">约定还款日</label>
-          <el-date-picker
-            v-model="form.due_at"
-            type="date"
-            value-format="YYYY-MM-DD"
-            class="w-full!"
-          />
-        </div>
-        <div>
-          <label class="mb-1 block text-xs text-ink-muted">备注</label>
-          <el-input v-model="form.note" placeholder="可选" maxlength="64" />
-        </div>
-      </div>
-      <div class="mt-3 flex justify-end">
-        <el-button type="primary" @click="submitLend">确认借出</el-button>
-      </div>
+    <div>
+      <p class="text-xs text-ink-muted">未收回</p>
+      <p class="stat-num mt-0.5 text-xl font-semibold">
+        {{ formatMoney(loan.remaining, 'CNY') }}
+      </p>
+      <p class="mt-1 text-xs text-ink-muted">
+        本金 {{ formatMoney(loan.amount, 'CNY') }} · 到期 {{ loan.due_at || '—' }}
+        <span v-if="daysHint(loan)">· {{ daysHint(loan) }}</span>
+      </p>
+      <p class="mt-0.5 text-xs text-ink-muted">
+        来源 {{ store.fundSourceLabel(loan.funded_from) }}
+        <span v-if="loan.note">· {{ loan.note }}</span>
+      </p>
     </div>
+  </article>
 
-    <div class="space-y-2">
-      <div class="flex items-center justify-between gap-2">
-        <h3 class="text-sm font-medium">进行中（{{ openLoans.length }}）</h3>
-      </div>
-      <p v-if="!openLoans.length" class="text-xs text-ink-muted">暂无未收回借出</p>
-      <div
-        v-for="loan in openLoans"
-        :key="loan.id"
-        class="rounded-lg border border-surface-line px-3 py-3"
-      >
-        <div class="flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <div class="flex flex-wrap items-center gap-2">
-              <p class="font-medium">{{ loan.counterparty }}</p>
-              <span class="rounded px-1.5 py-0.5 text-xs" :class="statusClass(loan.status)">
-                {{ statusLabel(loan.status) }}
-              </span>
-              <span
-                v-if="isOverdue(loan)"
-                class="rounded bg-alert-soft px-1.5 py-0.5 text-xs text-alert"
-              >
-                逾期
-              </span>
-            </div>
-            <p class="mt-1 text-xs text-ink-muted">
-              借出 {{ loan.lent_at }} · 到期 {{ loan.due_at || '—' }}
-              <span v-if="daysHint(loan)">· {{ daysHint(loan) }}</span>
-            </p>
-            <p class="mt-0.5 text-xs text-ink-muted">
-              来源 {{ store.fundSourceLabel(loan.funded_from) }}
-              <span v-if="loan.note">· {{ loan.note }}</span>
-            </p>
-          </div>
-          <div class="text-right">
-            <p class="stat-num text-lg font-semibold">
-              {{ formatMoney(loan.remaining, 'CNY') }}
-            </p>
-            <p class="text-xs text-ink-muted">/ 本金 {{ formatMoney(loan.amount, 'CNY') }}</p>
-          </div>
-        </div>
-        <div class="mt-3 flex flex-wrap gap-2">
-          <el-button type="primary" size="small" @click="openRepay(loan)">收回</el-button>
-          <el-button type="danger" plain size="small" @click="submitWriteOff(loan)">核销</el-button>
-        </div>
-      </div>
-    </div>
-
-    <div v-if="closedLoans.length">
-      <button
-        type="button"
-        class="text-xs text-ink-muted underline-offset-2 hover:underline"
-        @click="showHistory = !showHistory"
-      >
-        {{ showHistory ? '收起' : '展开' }}已结束（{{ closedLoans.length }}）
-      </button>
-      <div v-if="showHistory" class="mt-2 space-y-2">
-        <div
-          v-for="loan in closedLoans"
-          :key="loan.id"
-          class="rounded-lg bg-surface px-3 py-2 text-xs text-ink-muted"
-        >
-          <span class="font-medium text-ink">{{ loan.counterparty }}</span>
-          · {{ statusLabel(loan.status) }} · {{ formatMoney(loan.amount, 'CNY') }} · 到期
-          {{ loan.due_at || '—' }}
-        </div>
-      </div>
-    </div>
-
-    <el-dialog
-      v-model="repayVisible"
-      title="收回借出"
-      width="92%"
-      class="max-w-md"
-      destroy-on-close
+  <div v-if="closedLoans.length" class="order-last sm:col-span-2">
+    <button
+      type="button"
+      class="text-xs text-ink-muted underline-offset-2 hover:underline"
+      @click="showHistory = !showHistory"
     >
-      <div v-if="repayTarget" class="space-y-4">
-        <p class="text-sm text-ink-muted">
-          {{ repayTarget.counterparty }} · 剩余
-          {{ formatMoney(repayTarget.remaining, 'CNY') }}
+      {{ showHistory ? '收起' : '展开' }}已结束（{{ closedLoans.length }}）
+    </button>
+    <div v-if="showHistory" class="mt-2 space-y-2">
+      <button
+        v-for="loan in closedLoans"
+        :key="loan.id"
+        type="button"
+        class="block w-full rounded-lg bg-surface px-3 py-2 text-left text-xs text-ink-muted"
+        @click="openEdit(loan)"
+      >
+        <span class="font-medium text-ink">{{ loan.counterparty }}</span>
+        · {{ statusLabel(loan.status) }} · {{ formatMoney(loan.amount, 'CNY') }} · 到期
+        {{ loan.due_at || '—' }}
+      </button>
+    </div>
+  </div>
+
+  <el-dialog
+    v-model="createVisible"
+    title="登记借出"
+    width="92%"
+    class="max-w-md"
+    append-to-body
+    destroy-on-close
+  >
+    <div class="space-y-4">
+      <p class="text-xs text-ink-muted">
+        借给朋友会扣现金并记应收。净资产先不变，核销才算损失。
+      </p>
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">借款人</label>
+        <el-input v-model="form.counterparty" placeholder="朋友姓名" maxlength="32" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">金额（CNY）</label>
+        <AmountInput v-model="form.amount" :min="0.01" class="w-full!" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">扣款来源</label>
+        <el-select v-model="form.funded_from" class="w-full">
+          <el-option
+            v-for="opt in fundOptions"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+          />
+        </el-select>
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">借出日</label>
+        <el-date-picker
+          v-model="form.lent_at"
+          type="date"
+          value-format="YYYY-MM-DD"
+          class="w-full!"
+        />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">约定还款日</label>
+        <el-date-picker
+          v-model="form.due_at"
+          type="date"
+          value-format="YYYY-MM-DD"
+          class="w-full!"
+        />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">备注</label>
+        <el-input v-model="form.note" placeholder="可选" maxlength="64" />
+      </div>
+    </div>
+    <template #footer>
+      <el-button @click="createVisible = false">取消</el-button>
+      <el-button type="primary" @click="submitLend">确认借出</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog
+    v-model="editVisible"
+    :title="editingLoan ? `修改 ${editingLoan.counterparty}` : '修改借出'"
+    width="92%"
+    class="max-w-md"
+    append-to-body
+    destroy-on-close
+  >
+    <div v-if="editingLoan" class="space-y-4">
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">借款人</label>
+        <el-input v-model="editForm.counterparty" maxlength="32" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">本金（CNY）</label>
+        <AmountInput
+          v-model="editForm.amount"
+          :min="0.01"
+          :disabled="!canEditAmount"
+          class="w-full!"
+        />
+        <p class="mt-1 text-xs text-ink-muted">
+          <template v-if="canEditAmount">
+            还没收回过，改金额会从{{ store.fundSourceLabel(editingLoan.funded_from) }}补扣或退回。
+          </template>
+          <template v-else>
+            未收回 {{ formatMoney(editingLoan.remaining, 'CNY') }} · 来源
+            {{ store.fundSourceLabel(editingLoan.funded_from) }}
+          </template>
         </p>
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">借出日</label>
+        <el-date-picker
+          v-model="editForm.lent_at"
+          type="date"
+          value-format="YYYY-MM-DD"
+          class="w-full!"
+        />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">约定还款日</label>
+        <el-date-picker
+          v-model="editForm.due_at"
+          type="date"
+          value-format="YYYY-MM-DD"
+          class="w-full!"
+        />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">备注</label>
+        <el-input v-model="editForm.note" maxlength="64" />
+      </div>
+
+      <div
+        v-if="editingLoan.status === 'open' || editingLoan.status === 'partial'"
+        class="space-y-3 border-t border-surface-line pt-4"
+      >
+        <p class="text-sm font-medium">收回</p>
         <div>
           <label class="mb-1 block text-xs text-ink-muted">收回金额</label>
           <AmountInput
-            v-model="repayForm.amount"
+            v-model="editForm.repayAmount"
             :min="0.01"
-            :max="repayTarget.remaining"
+            :max="editingLoan.remaining"
             class="w-full!"
           />
         </div>
         <div>
           <label class="mb-1 block text-xs text-ink-muted">入账账户</label>
-          <el-select v-model="repayForm.to_account" class="w-full">
+          <el-select v-model="editForm.repayTo" class="w-full">
             <el-option
               v-for="opt in fundOptions"
               :key="opt.value"
@@ -337,21 +456,32 @@ async function submitWriteOff(loan: LoanRecord) {
         <div>
           <label class="mb-1 block text-xs text-ink-muted">收款日</label>
           <el-date-picker
-            v-model="repayForm.repaid_at"
+            v-model="editForm.repaidAt"
             type="date"
             value-format="YYYY-MM-DD"
             class="w-full!"
           />
         </div>
-        <div>
-          <label class="mb-1 block text-xs text-ink-muted">备注</label>
-          <el-input v-model="repayForm.note" maxlength="64" />
-        </div>
       </div>
-      <template #footer>
-        <el-button @click="repayVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitRepay">确认收回</el-button>
-      </template>
-    </el-dialog>
-  </section>
+    </div>
+    <template #footer>
+      <el-button
+        v-if="editingLoan && (editingLoan.status === 'open' || editingLoan.status === 'partial')"
+        type="danger"
+        plain
+        @click="submitWriteOff"
+      >
+        核销
+      </el-button>
+      <el-button @click="editVisible = false">关闭</el-button>
+      <el-button type="primary" plain @click="saveEdit">保存</el-button>
+      <el-button
+        v-if="editingLoan && (editingLoan.status === 'open' || editingLoan.status === 'partial')"
+        type="primary"
+        @click="submitRepay"
+      >
+        确认收回
+      </el-button>
+    </template>
+  </el-dialog>
 </template>
