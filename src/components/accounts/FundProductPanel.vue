@@ -11,9 +11,22 @@ import {
   fundMarketValue,
   fundPnl,
 } from '@/utils/currency'
-import { isFutureBeijingDate, formatMonthDay, todayBeijingDate } from '@/utils/datetime'
+import {
+  formatBeijingDateTime,
+  formatMonthDay,
+  isFutureBeijingDate,
+  nowBeijingDateTime,
+  parseBeijingDateTime,
+} from '@/utils/datetime'
 import { add, div, mul, round, sub } from '@/utils/decimal'
 import { derivePrevNav, lotDailyPnl } from '@/utils/fund-nav'
+import {
+  findPublishedNav,
+  fundBuyCutoffHint,
+  isPendingFundLot,
+  pendingFundAmount,
+  resolveFundBuySettlement,
+} from '@/utils/fund-trade'
 
 const props = defineProps<{
   account: PoolAccount
@@ -25,8 +38,7 @@ const navRefreshing = ref(false)
 const tradeMode = ref<'buy' | 'sell'>('buy')
 const buyForm = ref({
   amount: 100,
-  confirmNav: 0,
-  confirmDate: todayBeijingDate(),
+  applyAt: nowBeijingDateTime(),
   note: '',
 })
 const sellForm = ref({
@@ -48,8 +60,10 @@ const summary = computed(() => {
     pnl,
     rate,
     nav: account.nav ?? 0,
-    costNav: shares > 0 && cost > 0 ? round(div(cost, shares), 4) : 0,
+    costNav:
+      shares > 0 && cost > 0 ? round(div(sub(cost, pendingFundAmount(lots.value)), shares), 4) : 0,
     shares,
+    pending: pendingFundAmount(account.fund_lots ?? []),
     asOf: account.nav_updated_at?.slice(0, 10) ?? '',
   }
 })
@@ -108,12 +122,14 @@ watch([() => dailyLog.value.length, dailyPageSize], () => {
 })
 
 function lotMarketValue(lot: FundLot) {
+  if (isPendingFundLot(lot)) return lot.amount
   const nav = props.account.nav
   if (!(nav! > 0)) return 0
   return round(mul(lot.shares, nav!), 2)
 }
 
 function lotPnl(lot: FundLot) {
+  if (isPendingFundLot(lot)) return 0
   return sub(lotMarketValue(lot), lot.amount)
 }
 
@@ -122,9 +138,14 @@ function lotPnlRate(lot: FundLot) {
   return div(lotPnl(lot), lot.amount)
 }
 
+const buySettlement = computed(() =>
+  resolveFundBuySettlement(parseBeijingDateTime(buyForm.value.applyAt)),
+)
+const buyKnownNav = computed(() => findPublishedNav(props.account, buySettlement.value.navDate))
+const buyCutoffHint = computed(() => fundBuyCutoffHint(buySettlement.value))
 const buyPreviewShares = computed(() => {
   const amount = buyForm.value.amount
-  const nav = buyForm.value.confirmNav
+  const nav = buyKnownNav.value
   if (!(amount > 0) || !(nav > 0)) return 0
   return round(div(amount, nav), 4)
 })
@@ -147,11 +168,14 @@ watch(
   () => props.account.nav,
   (nav) => {
     if (!(nav && nav > 0)) return
-    if (!(buyForm.value.confirmNav > 0)) buyForm.value.confirmNav = nav
     if (!(sellForm.value.redeemNav > 0)) sellForm.value.redeemNav = nav
   },
   { immediate: true },
 )
+
+watch(tradeMode, (mode) => {
+  if (mode === 'buy') buyForm.value.applyAt = nowBeijingDateTime()
+})
 
 async function refreshNav() {
   navRefreshing.value = true
@@ -165,7 +189,6 @@ async function refreshNav() {
     ElMessage.success(
       `${props.account.name} 净值 ${result.nav}（${result.as_of}）· 市值 ${formatMoney(result.amount, currency.value)}${dailyText} · 浮${result.pnl >= 0 ? '盈' : '亏'} ${sign}${formatMoney(result.pnl, currency.value)}（${formatPercent(result.profit_rate)}）`,
     )
-    if (!(buyForm.value.confirmNav > 0)) buyForm.value.confirmNav = result.nav
     if (!(sellForm.value.redeemNav > 0)) sellForm.value.redeemNav = result.nav
   } catch (error) {
     if (error instanceof Error) ElMessage.error(error.message)
@@ -178,14 +201,20 @@ function saveBuy() {
   try {
     const lot = store.addFundLot(props.account.id, {
       amount: buyForm.value.amount,
-      confirmNav: buyForm.value.confirmNav,
-      confirmDate: buyForm.value.confirmDate,
+      applyAt: buyForm.value.applyAt,
       note: buyForm.value.note,
     })
-    ElMessage.success(
-      `已加仓 ${formatMoney(lot.amount, currency.value)} → ${lot.shares.toFixed(4)} 份（净值 ${lot.confirm_nav.toFixed(4)}）`,
-    )
+    if (lot.pending) {
+      ElMessage.success(
+        `已记在途 ${formatMoney(lot.amount, currency.value)}，净值日 ${lot.confirm_date}，刷新净值后确认份额`,
+      )
+    } else {
+      ElMessage.success(
+        `已加仓 ${formatMoney(lot.amount, currency.value)} → ${lot.shares.toFixed(4)} 份（净值 ${lot.confirm_nav.toFixed(4)}）`,
+      )
+    }
     buyForm.value.amount = 100
+    buyForm.value.applyAt = nowBeijingDateTime()
     buyForm.value.note = ''
   } catch (error) {
     if (error instanceof Error) ElMessage.error(error.message)
@@ -242,7 +271,7 @@ async function removeProduct() {
           </span>
         </h3>
         <p class="text-xs text-ink-muted">
-          加仓/卖出按份额记账（卖出 FIFO）；勿再手改总额。点问号看公式。
+          加仓按北京时间 15:00 切日（盘前当日净值，盘后下一交易日）；卖出 FIFO。点问号看公式。
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -264,13 +293,16 @@ async function removeProduct() {
               <FormulaTooltip>
                 成本
                 <template #content>
-                  <p>加仓明细未卖出部分的投入合计（FIFO 成本）</p>
+                  <p>加仓明细未卖出部分的投入合计（含在途）</p>
                   <p class="font-mono">{{ formatMoney(summary.cost, currency) }}</p>
                 </template>
               </FormulaTooltip>
             </p>
             <p class="stat-num mt-0.5 font-semibold">
               {{ formatMoney(summary.cost, currency) }}
+            </p>
+            <p v-if="summary.pending > 0" class="mt-0.5 text-[10px] text-ink-muted">
+              在途 {{ formatMoney(summary.pending, currency) }}
             </p>
           </div>
           <div>
@@ -295,7 +327,7 @@ async function removeProduct() {
               <FormulaTooltip>
                 持仓份额
                 <template #content>
-                  <p>加仓明细未卖出份额合计</p>
+                  <p>加仓明细已确认份额合计（不含在途）</p>
                 </template>
               </FormulaTooltip>
             </p>
@@ -306,9 +338,9 @@ async function removeProduct() {
               <FormulaTooltip>
                 成本净值
                 <template #content>
-                  <p>持仓成本净值 = 总成本 ÷ 总份额</p>
+                  <p>持仓成本净值 = 已确认成本 ÷ 总份额</p>
                   <p class="font-mono">
-                    {{ formatMoney(summary.cost, currency) }}
+                    {{ formatMoney(sub(summary.cost, summary.pending), currency) }}
                     ÷ {{ sharesText }} = {{ costNavText }}
                   </p>
                 </template>
@@ -548,50 +580,55 @@ async function removeProduct() {
             <AmountInput v-model="buyForm.amount" :min="0.01" class="w-full!" />
           </div>
           <div>
-            <label class="mb-1 block text-xs text-ink-muted">确认净值</label>
-            <el-input-number
-              v-model="buyForm.confirmNav"
-              :min="0.0001"
-              :step="0.0001"
-              :precision="4"
-              controls-position="right"
-              class="w-full!"
-            />
-          </div>
-          <div>
-            <label class="mb-1 block text-xs text-ink-muted">确认日</label>
+            <label class="mb-1 block text-xs text-ink-muted">申购时间（北京）</label>
             <el-date-picker
-              v-model="buyForm.confirmDate"
-              type="date"
-              value-format="YYYY-MM-DD"
+              v-model="buyForm.applyAt"
+              type="datetime"
+              value-format="YYYY-MM-DD HH:mm"
+              format="YYYY-MM-DD HH:mm"
               :disabled-date="isFutureBeijingDate"
-              placeholder="选择确认日"
+              placeholder="选择申购时间"
               class="w-full!"
             />
           </div>
-          <div>
+          <div class="sm:col-span-2">
             <label class="mb-1 block text-xs text-ink-muted">备注（可选）</label>
             <el-input v-model="buyForm.note" maxlength="32" placeholder="如：支付宝买入" />
           </div>
-          <div class="sm:col-span-2 flex flex-wrap items-center gap-3">
-            <p class="text-xs text-ink-muted">
+          <p class="sm:col-span-2 text-xs text-ink-muted">{{ buyCutoffHint }}</p>
+          <div
+            class="sm:col-span-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-muted"
+          >
+            <span>
+              净值日
+              <span class="font-mono text-ink">{{ buySettlement.navDate }}</span>
+            </span>
+            <span>
+              确认净值
+              <span class="font-mono text-ink">
+                {{ buyKnownNav ? buyKnownNav.toFixed(4) : '待公布' }}
+              </span>
+            </span>
+            <span>
               <FormulaTooltip>
                 预估份额
                 <template #content>
-                  <p>加仓：份额 = 投入金额 ÷ 确认净值（写入明细）</p>
+                  <p>交易日 15:00 前按当日净值，15:00 后或非交易日按下一交易日净值</p>
+                  <p>净值未公布时先记在途，刷新后再确认份额</p>
+                  <p>份额 = 投入金额 ÷ 确认净值</p>
                   <p class="font-mono">
                     {{ formatMoney(buyForm.amount, currency) }}
-                    ÷ {{ buyForm.confirmNav ? buyForm.confirmNav.toFixed(4) : '—' }}
+                    ÷ {{ buyKnownNav ? buyKnownNav.toFixed(4) : '待公布' }}
                     =
-                    {{ buyPreviewShares ? buyPreviewShares.toFixed(4) : '—' }}
+                    {{ buyPreviewShares ? buyPreviewShares.toFixed(4) : '在途' }}
                   </p>
                 </template>
               </FormulaTooltip>
               =
               <span class="font-mono text-ink">
-                {{ buyPreviewShares ? buyPreviewShares.toFixed(4) : '—' }}
+                {{ buyPreviewShares ? buyPreviewShares.toFixed(4) : '在途' }}
               </span>
-            </p>
+            </span>
             <el-button type="primary" @click="saveBuy">确认加仓</el-button>
           </div>
         </div>
@@ -656,7 +693,7 @@ async function removeProduct() {
         <table v-if="lots.length" class="w-full min-w-[720px] border-collapse text-left text-xs">
           <thead>
             <tr class="border-b border-surface-line text-ink-muted">
-              <th class="px-2 py-2 font-medium">确认日</th>
+              <th class="px-2 py-2 font-medium">净值日</th>
               <th class="px-2 py-2 font-medium">投入</th>
               <th class="px-2 py-2 font-medium">确认净值</th>
               <th class="px-2 py-2 font-medium">
@@ -697,27 +734,54 @@ async function removeProduct() {
           </thead>
           <tbody>
             <tr v-for="lot in lots" :key="lot.id" class="border-b border-surface-line/60">
-              <td class="px-2 py-2 font-mono">{{ lot.confirm_date }}</td>
+              <td class="px-2 py-2 font-mono">
+                {{ lot.confirm_date }}
+                <span
+                  v-if="isPendingFundLot(lot)"
+                  class="ml-1 rounded bg-surface-tint px-1 py-0.5 text-[10px] font-normal text-accent"
+                >
+                  在途
+                </span>
+              </td>
               <td class="px-2 py-2">{{ formatMoney(lot.amount, currency) }}</td>
-              <td class="px-2 py-2 font-mono">{{ lot.confirm_nav.toFixed(4) }}</td>
-              <td class="px-2 py-2 font-mono">{{ lot.shares.toFixed(4) }}</td>
+              <td class="px-2 py-2 font-mono">
+                {{ isPendingFundLot(lot) ? '待公布' : lot.confirm_nav.toFixed(4) }}
+              </td>
+              <td class="px-2 py-2 font-mono">
+                {{ isPendingFundLot(lot) ? '在途' : lot.shares.toFixed(4) }}
+              </td>
               <td class="px-2 py-2">{{ formatMoney(lotMarketValue(lot), currency) }}</td>
               <td
                 class="px-2 py-2"
-                :class="daily.available ? quoteToneClass(lotTodayPnl(lot)) : 'text-ink-muted'"
+                :class="
+                  daily.available && !isPendingFundLot(lot)
+                    ? quoteToneClass(lotTodayPnl(lot))
+                    : 'text-ink-muted'
+                "
               >
-                <template v-if="daily.available">
+                <template v-if="isPendingFundLot(lot)">—</template>
+                <template v-else-if="daily.available">
                   {{ lotTodayPnl(lot) >= 0 ? '+' : ''
                   }}{{ formatMoney(lotTodayPnl(lot), currency) }}
                 </template>
                 <template v-else>—</template>
               </td>
-              <td class="px-2 py-2" :class="quoteToneClass(lotPnl(lot))">
-                {{ lotPnl(lot) >= 0 ? '+' : '' }}{{ formatMoney(lotPnl(lot), currency) }} （{{
-                  formatPercent(lotPnlRate(lot))
-                }}）
+              <td
+                class="px-2 py-2"
+                :class="isPendingFundLot(lot) ? 'text-ink-muted' : quoteToneClass(lotPnl(lot))"
+              >
+                <template v-if="isPendingFundLot(lot)">—</template>
+                <template v-else>
+                  {{ lotPnl(lot) >= 0 ? '+' : '' }}{{ formatMoney(lotPnl(lot), currency) }} （{{
+                    formatPercent(lotPnlRate(lot))
+                  }}）
+                </template>
               </td>
-              <td class="px-2 py-2 text-ink-muted">{{ lot.note || '—' }}</td>
+              <td class="px-2 py-2 text-ink-muted">
+                <span v-if="lot.apply_at">{{ formatBeijingDateTime(lot.apply_at) }}</span>
+                <span v-if="lot.apply_at && lot.note">·</span>
+                {{ lot.note || (lot.apply_at ? '' : '—') }}
+              </td>
             </tr>
           </tbody>
           <tfoot>

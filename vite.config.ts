@@ -59,6 +59,12 @@ const apiProxies: Record<string, ProxyOptions> = {
     'https://fundsuggest.eastmoney.com',
     'https://fund.eastmoney.com/',
   ),
+  // 东财美股代码检索：添加持仓时核对代码并带回中文简称
+  '/api/em-suggest': apiProxy(
+    '/api/em-suggest',
+    'https://searchapi.eastmoney.com',
+    'https://www.eastmoney.com/',
+  ),
 }
 
 const elementPlusResolver = ElementPlusResolver({ importStyle: 'css' })

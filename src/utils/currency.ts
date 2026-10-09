@@ -1,5 +1,6 @@
 import type { BaseCurrency, PoolAccount, UsStockHolding } from '@/types/finance'
 import { div, mul, round, sub } from '@/utils/decimal'
+import { holdingsFromFundLots } from '@/utils/fund-trade'
 
 export function stockMarketValue(stock: UsStockHolding): number {
   const price = stock.market_price ?? stock.cost_price
@@ -10,8 +11,10 @@ export function stockCostBasis(stock: UsStockHolding): number {
   return mul(stock.shares, stock.cost_price)
 }
 
-/** 基金市值：有份额+净值则按乘积，否则用 amount */
+/** 基金市值：已确认份额 × 净值 + 在途金额 */
 export function fundMarketValue(account: PoolAccount): number {
+  const lots = account.fund_lots
+  if (lots?.length) return holdingsFromFundLots(lots, account.nav).market
   if (account.shares != null && account.shares > 0 && account.nav != null && account.nav > 0) {
     return round(mul(account.shares, account.nav), 2)
   }

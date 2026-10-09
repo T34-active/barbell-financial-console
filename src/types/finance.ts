@@ -4,18 +4,22 @@ export type BaseCurrency = 'HKD' | 'CNY' | 'USD' | 'USDT' | 'SGD'
 /** 账户资产类型 */
 export type AccountAssetType = 'cash' | 'gold' | 'bank' | 'crypto_earn' | 'fund'
 
-/** 公募基金加仓明细（按确认日） */
+/** 公募基金加仓明细（confirm_date = 净值日） */
 export interface FundLot {
   id: string
-  /** 确认日 YYYY-MM-DD */
+  /** 净值日 YYYY-MM-DD（15:00 切日后的成交净值所属日） */
   confirm_date: string
   /** 投入金额（本币） */
   amount: number
-  /** 确认净值 */
+  /** 确认净值；在途为 0 */
   confirm_nav: number
-  /** 确认份额 */
+  /** 确认份额；在途为 0 */
   shares: number
   note?: string
+  /** 申购时间 ISO */
+  apply_at?: string
+  /** 净值未公布，待刷新后确认份额 */
+  pending?: boolean
 }
 
 /** 黄金/基金按净值日冻结的当日盈亏 */

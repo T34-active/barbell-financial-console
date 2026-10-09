@@ -7,8 +7,15 @@ import type {
   LiveFxSnapshot,
   PoolAccount,
 } from '@/types/finance'
-import { add, div, mul, round, sub } from '@/utils/decimal'
+import { div, round, sub } from '@/utils/decimal'
 import { isNavFundAccount } from '@/utils/fund-nav'
+import {
+  applyFundHoldingsFromLots,
+  confirmedFundShares,
+  fundLotsCost,
+  isPendingFundLot,
+  settlePendingFundLots,
+} from '@/utils/fund-trade'
 import { fetchLiveFxQuotes, isFxStale } from '@/utils/fx-rates'
 import type { FinanceRefs } from './state'
 
@@ -112,13 +119,14 @@ export function createMarket(
   }
 
   function fundNeedsNavRefresh(fund: PoolAccount) {
-    if (!fund.fund_code?.trim() || !(fund.shares! > 0 || fund.fund_lots?.length)) return false
+    const lots = fund.fund_lots ?? []
+    if (!fund.fund_code?.trim() || !(fund.shares! > 0 || lots.length)) return false
     const today = dayjs().toISOString().slice(0, 10)
     const lastFetchDay = fund.amount_updated_at?.slice(0, 10)
     const hasPrevNav = fund.prev_nav != null && fund.prev_nav > 0
     const ledger = fund.daily_pnl ?? []
     const hasDailyLedger = ledger.length > 0
-    const firstLotDate = (fund.fund_lots ?? []).reduce(
+    const firstLotDate = lots.reduce(
       (min, lot) => (!min || lot.confirm_date < min ? lot.confirm_date : min),
       '',
     )
@@ -126,12 +134,18 @@ export function createMarket(
       ? ledger.reduce((min, row) => (row.date < min ? row.date : min), ledger[0]!.date)
       : ''
     const needsBackfill = Boolean(firstLotDate && oldestLedger && oldestLedger > firstLotDate)
+    const pendingLots = lots.filter(isPendingFundLot)
+    if (pendingLots.length) {
+      const published = (fund.nav_updated_at ?? '').slice(0, 10)
+      if (published && pendingLots.some((lot) => lot.confirm_date <= published)) return true
+      return !(lastFetchDay === today && hasPrevNav)
+    }
     return !(lastFetchDay === today && hasPrevNav && hasDailyLedger && !needsBackfill)
   }
 
   /**
    * 拉取指定基金最新净值，按份额重算市值与浮盈亏。
-   * 需账户已有 fund_code + shares（或 fund_lots）。
+   * 在途加仓在对应净值日公布后回填份额；从该日起解冻日盈亏再重算。
    */
   async function refreshFundNav(accountId: string) {
     const fund = accounts.value.rmb_pool.find((item) => item.id === accountId)
@@ -139,25 +153,16 @@ export function createMarket(
     const code = fund.fund_code?.trim()
     if (!code) throw new Error(`${fund.name} 缺少基金代码`)
 
-    let shares = fund.shares ?? 0
-    let cost = fund.cost_amount ?? 0
-    if (!(shares > 0) && fund.fund_lots?.length) {
-      shares = round(
-        fund.fund_lots.reduce((sum, lot) => add(sum, lot.shares), 0),
-        4,
-      )
-      cost = round(
-        fund.fund_lots.reduce((sum, lot) => add(sum, lot.amount), 0),
-        2,
-      )
-      fund.shares = shares
-      fund.cost_amount = cost
+    const rawLots = fund.fund_lots ?? []
+    const hasPending = rawLots.some(isPendingFundLot)
+    if (rawLots.length) {
+      fund.shares = confirmedFundShares(rawLots)
+      fund.cost_amount = fundLotsCost(rawLots)
     }
-    if (!(shares > 0)) throw new Error(`${fund.name} 缺少持仓份额`)
-    if (!(cost > 0)) throw new Error(`${fund.name} 缺少成本`)
+    if (!((fund.shares ?? 0) > 0) && !hasPending) throw new Error(`${fund.name} 缺少持仓份额`)
+    if (!((fund.cost_amount ?? 0) > 0) && !hasPending) throw new Error(`${fund.name} 缺少成本`)
 
-    const lots = fund.fund_lots ?? []
-    const firstLotDate = lots.reduce(
+    const firstLotDate = rawLots.reduce(
       (min, lot) => (!min || lot.confirm_date < min ? lot.confirm_date : min),
       '',
     )
@@ -167,21 +172,24 @@ export function createMarket(
     })
     const quote = quotes[0]
     if (!quote) throw new Error('未返回有效净值')
-    const market = round(mul(shares, quote.nav), 2)
-    const pnl = sub(market, cost)
-    const rate = div(pnl, cost)
 
+    const settled = settlePendingFundLots(rawLots, quotes)
+    fund.fund_lots = settled.lots
+    const lots = settled.lots
     fund.nav = quote.nav
     fund.nav_updated_at = quote.as_of
     fund.prev_nav = quote.prev_nav
     fund.nav_day_change = quote.day_change
-    fund.shares = shares
-    fund.cost_amount = cost
-    fund.amount = market
-    fund.profit_rate = round(rate, 4)
+    applyFundHoldingsFromLots(fund)
     fund.amount_updated_at = dayjs().toISOString()
+    const cost = fund.cost_amount ?? 0
 
     const byDate = new Map((fund.daily_pnl ?? []).map((row) => [row.date, row] as const))
+    if (settled.settledFrom) {
+      for (const date of [...byDate.keys()]) {
+        if (date >= settled.settledFrom) byDate.delete(date)
+      }
+    }
     const latestDate = quote.as_of
     for (const item of quotes) {
       if (!(item.prev_nav! > 0)) continue
@@ -209,10 +217,10 @@ export function createMarket(
     return {
       nav: quote.nav,
       as_of: quote.as_of,
-      amount: market,
+      amount: fund.amount,
       cost,
-      pnl: round(pnl, 2),
-      profit_rate: fund.profit_rate,
+      pnl: round(sub(fund.amount, cost), 2),
+      profit_rate: fund.profit_rate ?? 0,
       day_change: quote.day_change,
       prev_nav: quote.prev_nav,
     }
