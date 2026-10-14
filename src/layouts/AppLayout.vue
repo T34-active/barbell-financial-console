@@ -5,6 +5,9 @@ import { useTheme } from '@/composables/useTheme'
 const route = useRoute()
 const { isDark, mode, setMode, toggleDark } = useTheme()
 
+/** 公开源码仓库（GitHub Pages 访客拉代码用） */
+const githubRepoUrl = 'https://github.com/T34-active/barbell-financial-console'
+
 const navItems = [
   { name: 'dashboard', label: '总览', icon: 'i-carbon-dashboard', to: '/' },
   { name: 'accounts', label: '账户', icon: 'i-carbon-wallet', to: '/accounts' },
@@ -61,6 +64,17 @@ const themeTitle = computed(() => {
               {{ item.label }}
             </RouterLink>
           </nav>
+
+          <a
+            :href="githubRepoUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="grid h-9 w-9 place-items-center rounded-lg border border-surface-line bg-surface-raised text-ink transition-colors hover:bg-surface-tint hover:text-ink"
+            title="GitHub 源码仓库"
+            aria-label="GitHub 源码仓库"
+          >
+            <span class="i-carbon-logo-github text-base" />
+          </a>
 
           <button
             type="button"
