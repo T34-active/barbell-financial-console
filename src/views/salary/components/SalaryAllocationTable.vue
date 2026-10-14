@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { SalaryAllocationPreview } from '@/types/finance'
-import { formatMoney, formatPercent } from '@/utils/currency'
+import { useFinanceFormat } from '@/composables/useFinanceFormat'
+import { formatPercent } from '@/utils/currency'
 import { useFinanceStore } from '@/stores/finance'
 
 withDefaults(
@@ -13,34 +14,29 @@ withDefaults(
 )
 
 const store = useFinanceStore()
+const { moneyInBase } = useFinanceFormat()
 const peCurrent = computed(() => store.settings.rules.nasdaq_pe_current)
 const peThreshold = computed(() => store.settings.rules.nasdaq_pe_threshold)
 </script>
 
 <template>
   <section class="panel overflow-hidden">
-    <div class="flex flex-col gap-3 border-b border-surface-line px-5 py-4 md:flex-row md:items-start md:justify-between md:px-6">
+    <div
+      class="flex flex-col gap-3 border-b border-surface-line px-5 py-4 md:flex-row md:items-start md:justify-between md:px-6"
+    >
       <div>
         <h2 class="text-base font-semibold">
           {{ deferred ? '模拟分配表' : '本月分配表' }}
         </h2>
-        <p class="mt-1 text-xs text-ink-muted">
-          工资 {{ formatMoney(preview.salary, 'CNY') }}
-        </p>
+        <p class="mt-1 text-xs text-ink-muted">工资 {{ moneyInBase(preview.salary, 'CNY') }}</p>
       </div>
       <div class="flex flex-wrap gap-1.5">
         <span class="rounded-full bg-surface px-2.5 py-1 text-[11px] text-ink-muted">
-          {{
-            preview.mode === 'divert_to_seed' ? '已满 · 转种子' : '补仓中'
-          }}
+          {{ preview.mode === 'divert_to_seed' ? '已满 · 转种子' : '补仓中' }}
         </span>
         <span
           class="rounded-full px-2.5 py-1 text-[11px]"
-          :class="
-            preview.peGuardActive
-              ? 'bg-risk-soft text-risk'
-              : 'bg-surface text-ink-muted'
-          "
+          :class="preview.peGuardActive ? 'bg-risk-soft text-risk' : 'bg-surface text-ink-muted'"
         >
           PE {{ peCurrent }} / {{ peThreshold }}
           {{ preview.peGuardActive ? ' · 观察仓' : '' }}
@@ -88,21 +84,15 @@ const peThreshold = computed(() => store.settings.rules.nasdaq_pe_threshold)
               {{ formatPercent(line.ratio) }}
             </td>
             <td class="stat-num px-3 py-3.5 font-semibold">
-              {{ formatMoney(line.amount, 'CNY') }}
-              <p
-                v-if="line.split_amounts"
-                class="mt-1 text-xs font-normal text-ink-muted"
-              >
+              {{ moneyInBase(line.amount, 'CNY') }}
+              <p v-if="line.split_amounts" class="mt-1 text-xs font-normal text-ink-muted">
                 每人
-                {{ formatMoney(line.split_amounts[0], 'CNY') }}
+                {{ moneyInBase(line.split_amounts[0], 'CNY') }}
                 /
-                {{ formatMoney(line.split_amounts[1], 'CNY') }}
+                {{ moneyInBase(line.split_amounts[1], 'CNY') }}
               </p>
-              <p
-                v-if="line.reserved_amount"
-                class="mt-1 text-xs font-normal text-accent"
-              >
-                先锁 {{ formatMoney(line.reserved_amount, 'CNY') }}
+              <p v-if="line.reserved_amount" class="mt-1 text-xs font-normal text-accent">
+                先锁 {{ moneyInBase(line.reserved_amount, 'CNY') }}
               </p>
             </td>
             <td class="px-3 py-3.5 text-xs leading-5 text-ink-muted">
@@ -125,27 +115,26 @@ const peThreshold = computed(() => store.settings.rules.nasdaq_pe_threshold)
         <div class="flex items-start justify-between gap-2">
           <p class="text-sm font-medium">
             {{ line.label }}
-            <span
-              v-if="line.diverted"
-              class="ml-1 text-[11px] font-normal text-accent"
-            >已并入</span>
+            <span v-if="line.diverted" class="ml-1 text-[11px] font-normal text-accent">
+              已并入
+            </span>
           </p>
           <p class="stat-num text-right text-sm font-semibold">
-            {{ formatMoney(line.amount, 'CNY') }}
+            {{ moneyInBase(line.amount, 'CNY') }}
             <span
               v-if="line.split_amounts"
               class="mt-1 block text-[11px] font-normal text-ink-muted"
             >
               每人
-              {{ formatMoney(line.split_amounts[0], 'CNY') }}
+              {{ moneyInBase(line.split_amounts[0], 'CNY') }}
               /
-              {{ formatMoney(line.split_amounts[1], 'CNY') }}
+              {{ moneyInBase(line.split_amounts[1], 'CNY') }}
             </span>
             <span
               v-if="line.reserved_amount"
               class="mt-1 block text-[11px] font-normal text-accent"
             >
-              先锁 {{ formatMoney(line.reserved_amount, 'CNY') }}
+              先锁 {{ moneyInBase(line.reserved_amount, 'CNY') }}
             </span>
           </p>
         </div>

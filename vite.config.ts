@@ -69,7 +69,7 @@ const apiProxies: Record<string, ProxyOptions> = {
 
 const elementPlusResolver = ElementPlusResolver({ importStyle: 'css' })
 
-/** 项目站路径，对应 https://<owner>.github.io/barbell-financial-console/ */
+/** 公开演示站路径，对应 https://<owner>.github.io/barbell-financial-console/ */
 const githubPagesBase = '/barbell-financial-console/'
 
 function githubPagesSpaFallback() {
@@ -79,7 +79,6 @@ function githubPagesSpaFallback() {
     closeBundle() {
       if (process.env.GITHUB_PAGES !== 'true') return
       const dist = fileURLToPath(new URL('./dist', import.meta.url))
-      // GitHub Pages 没有 SPA 回退，深链刷新会落到 404.html
       copyFileSync(join(dist, 'index.html'), join(dist, '404.html'))
     },
   }
@@ -112,9 +111,37 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  optimizeDeps: {
+    include: [
+      'element-plus/es',
+      'element-plus/es/components/base/style/css',
+      'element-plus/es/components/autocomplete/style/css',
+      'element-plus/es/components/button/style/css',
+      'element-plus/es/components/config-provider/style/css',
+      'element-plus/es/components/date-picker/style/css',
+      'element-plus/es/components/dialog/style/css',
+      'element-plus/es/components/input/style/css',
+      'element-plus/es/components/input-number/style/css',
+      'element-plus/es/components/message/style/css',
+      'element-plus/es/components/message-box/style/css',
+      'element-plus/es/components/option/style/css',
+      'element-plus/es/components/pagination/style/css',
+      'element-plus/es/components/radio/style/css',
+      'element-plus/es/components/radio-button/style/css',
+      'element-plus/es/components/radio-group/style/css',
+      'element-plus/es/components/select/style/css',
+      'element-plus/es/components/switch/style/css',
+      'element-plus/es/components/table/style/css',
+      'element-plus/es/components/table-column/style/css',
+      'element-plus/es/components/tooltip/style/css',
+    ],
+  },
   server: {
     host: true,
-    port: 888,
+    port: 8888,
+    warmup: {
+      clientFiles: ['./src/views/**/*.vue', './src/components/**/*.vue'],
+    },
     proxy: apiProxies,
   },
   preview: {

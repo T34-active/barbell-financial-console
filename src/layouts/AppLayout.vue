@@ -52,7 +52,7 @@ const themeTitle = computed(() => {
               :to="item.to"
               class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors"
               :class="
-                route.name === item.name
+                route.matched.some((record) => record.name === item.name)
                   ? 'bg-surface-tint text-ink font-medium'
                   : 'text-ink-muted hover:bg-surface-tint/70 hover:text-ink'
               "
@@ -73,11 +73,7 @@ const themeTitle = computed(() => {
             <span
               class="text-base"
               :class="
-                mode === 'system'
-                  ? 'i-carbon-laptop'
-                  : isDark
-                    ? 'i-carbon-moon'
-                    : 'i-carbon-sun'
+                mode === 'system' ? 'i-carbon-laptop' : isDark ? 'i-carbon-moon' : 'i-carbon-sun'
               "
             />
           </button>
@@ -101,7 +97,7 @@ const themeTitle = computed(() => {
           :to="item.to"
           class="flex flex-col items-center gap-1 rounded-lg px-2 py-2 text-xs transition-colors"
           :class="
-            route.name === item.name
+            route.matched.some((record) => record.name === item.name)
               ? 'bg-surface-tint text-ink font-medium'
               : 'text-ink-muted'
           "

@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import SafetyPadStatus from '@/components/salary/SafetyPadStatus.vue'
-import SalaryAllocationTable from '@/components/salary/SalaryAllocationTable.vue'
-import PaydayStatusBanner from '@/components/salary/PaydayStatusBanner.vue'
-import FunFundPocket from '@/components/salary/FunFundPocket.vue'
+import SafetyPadStatus from './components/SafetyPadStatus.vue'
+import SalaryAllocationTable from './components/SalaryAllocationTable.vue'
+import PaydayStatusBanner from './components/PaydayStatusBanner.vue'
+import FunFundPocket from './components/FunFundPocket.vue'
 import { useFinanceStore } from '@/stores/finance'
 import { resolvePaydayStatus } from '@/utils/payday'
+import { useFinanceFormat } from '@/composables/useFinanceFormat'
 import { formatMoney, formatPercent } from '@/utils/currency'
 import { mul, round, sub } from '@/utils/decimal'
 import type { ExtraIncomeMode, SalaryAllocationRecord } from '@/types/finance'
 
 const store = useFinanceStore()
+const { moneyInBase } = useFinanceFormat()
 
 const extraModes = computed<Array<{ value: ExtraIncomeMode; label: string; hint: string }>>(() => {
   const parentsPct = round(mul(store.salary.settings.ratios.parents, 100), 0)
@@ -106,7 +108,7 @@ async function handleExtraIncome() {
   try {
     const modeText = extraModeLabel(extraMode.value)
     await ElMessageBox.confirm(
-      `确认记入额外收入 ${formatMoney(extraAmount.value, 'CNY')}（${extraNote.value.trim()}）？\n去向：${modeText}`,
+      `确认记入额外收入 ${moneyInBase(extraAmount.value, 'CNY')}（${extraNote.value.trim()}）？\n去向：${modeText}`,
       '额外收入入账',
       {
         confirmButtonText: '确认入账',
@@ -160,8 +162,8 @@ async function handleConfirm() {
     const isCatchUp = payday.value.status === 'overdue'
     await ElMessageBox.confirm(
       isCatchUp
-        ? `补录模式（账期 ${yearMonth.value}）：确认按 ${formatMoney(salaryInput.value, 'CNY')} 入账？\n将按此刻应急备用金余额判定安全垫/进攻比例。\n预期储蓄率 ${formatPercent(preview.value.projectedSavingsRate)}`
-        : `今日发薪日（账期 ${yearMonth.value}）：确认按 ${formatMoney(salaryInput.value, 'CNY')} 入账？\n安全垫是否满额以确认瞬间余额为准。\n预期储蓄率 ${formatPercent(preview.value.projectedSavingsRate)}`,
+        ? `补录模式（账期 ${yearMonth.value}）：确认按 ${moneyInBase(salaryInput.value, 'CNY')} 入账？\n将按此刻应急备用金余额判定安全垫/进攻比例。\n预期储蓄率 ${formatPercent(preview.value.projectedSavingsRate)}`
+        : `今日发薪日（账期 ${yearMonth.value}）：确认按 ${moneyInBase(salaryInput.value, 'CNY')} 入账？\n安全垫是否满额以确认瞬间余额为准。\n预期储蓄率 ${formatPercent(preview.value.projectedSavingsRate)}`,
       isCatchUp ? '补录本月入账' : '确认入账',
       {
         confirmButtonText: isCatchUp ? '确认补录' : '确认',
@@ -205,7 +207,7 @@ async function handleWithdraw() {
   }
   try {
     await ElMessageBox.confirm(
-      `从应急备用金取用 ${formatMoney(withdrawAmount.value, 'CNY')}？若跌破目标，下月将自动回溯补仓。`,
+      `从应急备用金取用 ${moneyInBase(withdrawAmount.value, 'CNY')}？若跌破目标，下月将自动回溯补仓。`,
       '应急取用',
       {
         confirmButtonText: '确认取用',
@@ -256,7 +258,7 @@ async function confirmRemit() {
     syncRemitPricesFromStore()
     const amount = store.markUsSeedRemitted(remitPrices.value)
     showRemitDialog.value = false
-    ElMessage.success(`已标记汇出 ${formatMoney(amount, 'CNY')}，市价已写入`)
+    ElMessage.success(`已标记汇出 ${moneyInBase(amount, 'CNY')}，市价已写入`)
   } catch (error) {
     if (error instanceof Error) ElMessage.error(error.message)
   }
@@ -269,7 +271,7 @@ async function handleTravelSpend() {
   }
   try {
     await ElMessageBox.confirm(
-      `本次花销 ${formatMoney(travelSpendAmount.value, 'CNY')}，扣完剩余 ${formatMoney(travelRemainingAfterSpend.value, 'CNY')}？`,
+      `本次花销 ${moneyInBase(travelSpendAmount.value, 'CNY')}，扣完剩余 ${moneyInBase(travelRemainingAfterSpend.value, 'CNY')}？`,
       '记入旅游花销',
       {
         confirmButtonText: '确认扣除',
@@ -290,12 +292,12 @@ async function handleTravelSpend() {
 async function handleReleaseObservation() {
   try {
     await ElMessageBox.confirm(
-      `将观察仓 ${formatMoney(store.cashObservation, 'CNY')} 释放至美股种子？`,
+      `将观察仓 ${moneyInBase(store.cashObservation, 'CNY')} 释放至美股种子？`,
       '释放观察仓',
       { confirmButtonText: '释放', cancelButtonText: '取消', type: 'info' },
     )
     const amount = store.releaseObservationToSeed()
-    ElMessage.success(`已释放 ${formatMoney(amount, 'CNY')} 至美股种子`)
+    ElMessage.success(`已释放 ${moneyInBase(amount, 'CNY')} 至美股种子`)
   } catch (error) {
     if (error instanceof Error && error.message) {
       ElMessage.error(error.message)
@@ -321,7 +323,7 @@ async function handleReleaseObservation() {
           高估保险丝开启 · PE {{ store.settings.rules.nasdaq_pe_current }}
         </p>
         <p v-if="existingRecord" class="rounded-lg bg-accent-soft px-3 py-1.5 text-xs text-accent">
-          本月已入账 · {{ formatMoney(existingRecord.salary, 'CNY') }}
+          本月已入账 · {{ moneyInBase(existingRecord.salary, 'CNY') }}
         </p>
       </div>
     </div>
@@ -379,7 +381,7 @@ async function handleReleaseObservation() {
           <el-table-column prop="note" label="来源" min-width="120" show-overflow-tooltip />
           <el-table-column label="金额" min-width="110" align="right">
             <template #default="{ row }">
-              {{ formatMoney(row.amount, 'CNY') }}
+              {{ moneyInBase(row.amount, 'CNY') }}
             </template>
           </el-table-column>
           <el-table-column label="去向" min-width="110">
@@ -441,7 +443,7 @@ async function handleReleaseObservation() {
       <div class="panel px-4 py-5 md:px-5">
         <h2 class="text-base font-semibold">旅游基金暂存</h2>
         <p class="stat-num mt-2 text-2xl font-semibold">
-          {{ formatMoney(store.travelFundPocket, 'CNY') }}
+          {{ moneyInBase(store.travelFundPocket, 'CNY') }}
         </p>
         <p class="mt-1 text-xs text-ink-muted">当前在余利宝</p>
         <p class="mt-2 text-xs text-ink-muted">先暂存余利宝吃利息，出行时再花。不计入储蓄率。</p>
@@ -469,7 +471,7 @@ async function handleReleaseObservation() {
             :class="travelRemainingAfterSpend >= 0 ? 'text-ink-muted' : 'text-alert'"
           >
             扣完还剩
-            {{ formatMoney(travelRemainingAfterSpend, 'CNY') }}
+            {{ moneyInBase(travelRemainingAfterSpend, 'CNY') }}
           </p>
         </div>
       </div>
@@ -477,7 +479,7 @@ async function handleReleaseObservation() {
       <div class="panel px-4 py-5 md:px-5">
         <h2 class="text-base font-semibold">现金观察仓</h2>
         <p class="stat-num mt-2 text-2xl font-semibold">
-          {{ formatMoney(store.cashObservation, 'CNY') }}
+          {{ moneyInBase(store.cashObservation, 'CNY') }}
         </p>
         <p class="mt-2 text-xs text-ink-muted">
           纳指高估时进攻份额暂扣于此（仍属储蓄/安全现金），PE 回落后再释放到美股种子。
@@ -498,7 +500,7 @@ async function handleReleaseObservation() {
       <div class="panel px-4 py-5 md:px-5">
         <h2 class="text-base font-semibold">美股种子暂存</h2>
         <p class="stat-num mt-2 text-2xl font-semibold">
-          {{ formatMoney(store.usSeedParking, 'CNY') }}
+          {{ moneyInBase(store.usSeedParking, 'CNY') }}
         </p>
         <p class="mt-2 text-xs text-ink-muted">
           汇出周期 {{ store.salary.settings.us_seed_remit_months }} 个月 · 已计入
@@ -536,37 +538,37 @@ async function handleReleaseObservation() {
         <el-table-column prop="year_month" label="账期" min-width="90" />
         <el-table-column label="工资" min-width="110" align="right">
           <template #default="{ row }">
-            {{ formatMoney(row.salary, 'CNY') }}
+            {{ moneyInBase(row.salary, 'CNY') }}
           </template>
         </el-table-column>
         <el-table-column label="爸妈" min-width="100" align="right">
           <template #default="{ row }">
-            {{ formatMoney(salaryLineAmount(row, 'parents'), 'CNY') }}
+            {{ moneyInBase(salaryLineAmount(row, 'parents'), 'CNY') }}
           </template>
         </el-table-column>
         <el-table-column label="安全垫" min-width="100" align="right">
           <template #default="{ row }">
-            {{ formatMoney(salaryLineAmount(row, 'safety_pad'), 'CNY') }}
+            {{ moneyInBase(salaryLineAmount(row, 'safety_pad'), 'CNY') }}
           </template>
         </el-table-column>
         <el-table-column label="进攻" min-width="100" align="right">
           <template #default="{ row }">
-            {{ formatMoney(salaryLineAmount(row, 'us_seed'), 'CNY') }}
+            {{ moneyInBase(salaryLineAmount(row, 'us_seed'), 'CNY') }}
           </template>
         </el-table-column>
         <el-table-column label="快乐" min-width="100" align="right">
           <template #default="{ row }">
-            {{ formatMoney(salaryLineAmount(row, 'fun_fund'), 'CNY') }}
+            {{ moneyInBase(salaryLineAmount(row, 'fun_fund'), 'CNY') }}
           </template>
         </el-table-column>
         <el-table-column label="旅游" min-width="100" align="right">
           <template #default="{ row }">
-            {{ formatMoney(salaryLineAmount(row, 'travel_fund'), 'CNY') }}
+            {{ moneyInBase(salaryLineAmount(row, 'travel_fund'), 'CNY') }}
           </template>
         </el-table-column>
         <el-table-column label="已花" min-width="90" align="right">
           <template #default="{ row }">
-            {{ formatMoney(row.fun_fund_spent, 'CNY') }}
+            {{ moneyInBase(row.fun_fund_spent, 'CNY') }}
           </template>
         </el-table-column>
         <el-table-column label="状态" min-width="160">

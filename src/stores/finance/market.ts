@@ -47,6 +47,8 @@ export function createMarket(
       if (!quote) continue
       stock.market_price = quote.price
       stock.price_updated_at = quote.as_of || now
+      stock.price_session = quote.session
+      stock.regular_price = quote.regular_price
       updated += 1
     }
 

@@ -36,6 +36,18 @@ export interface FundDailyPnl {
   day_change: number
 }
 
+/** 港币定期锁仓：本金到期前不能动，活期仍可存入取出 */
+export interface TermLock {
+  /** 起息日 YYYY-MM-DD，北京时间 */
+  start_date: string
+  /** 到期日 YYYY-MM-DD，北京时间 */
+  maturity_date: string
+  /** 锁仓本金。缺省时按当时账户余额 */
+  principal?: number
+  /** 定期年化（小数，如 0.024 = 2.4%）。与账户 yield_rate（活期）分开 */
+  rate?: number
+}
+
 /** 人民币/港币/加密池账户 */
 export interface PoolAccount {
   id: string
@@ -65,11 +77,16 @@ export interface PoolAccount {
   fund_lots?: FundLot[]
   /** 是否为汇丰安全红线账户 */
   is_safety_line?: boolean
+  /** 定期锁仓；利率在 term_lock.rate，不用活期 yield_rate */
+  term_lock?: TermLock
   /** 备注（如交易所、产品名） */
   note?: string
   /** 余额上次手工修改时间（ISO） */
   amount_updated_at?: string
 }
+
+/** 美股现价所属时段 */
+export type UsQuoteSession = 'pre' | 'regular' | 'post'
 
 /** 美股持仓 */
 export interface UsStockHolding {
@@ -83,10 +100,14 @@ export interface UsStockHolding {
   est_div_yield?: number
   /** 股息率上次更新时间 */
   div_yield_updated_at?: string
-  /** 最新市价，缺省时用成本价估算 */
+  /** 最新市价，缺省时用成本价估算。非常规交易时段为盘前/盘后实时价 */
   market_price?: number
-  /** 市价上次更新时间 */
+  /** 市价上次更新时间（成交时间，不是拉取时间） */
   price_updated_at?: string
+  /** 现价所属时段；旧数据可能没有 */
+  price_session?: UsQuoteSession
+  /** 最近一个常规交易时段价格；盘前/盘后时与现价不同 */
+  regular_price?: number
 }
 
 /** 资产分类：决定哑铃三端归属 */
@@ -99,8 +120,9 @@ export interface AssetClassification {
   crypto_assets: string[]
 }
 
-/** 快乐基金结转规则 */
-export type FunFundCarryoverRule = 'split_50_50' | 'surplus_happy_fund_to_offensive'
+/** 快乐基金结转规则：50/50，或分配表五个去向之一 */
+export type FunFundCarryoverRule =
+  'split_50_50' | 'parents' | 'safety_pad' | 'us_seed' | 'fun_fund' | 'travel_fund'
 
 export interface FinanceRules {
   /** 安全垫目标（CNY） */
@@ -392,6 +414,9 @@ export interface FunFundCarryoverRecord {
   rule: FunFundCarryoverRule
   to_safety: number
   to_seed: number
+  to_parents?: number
+  to_travel?: number
+  to_fun?: number
   created_at: string
 }
 
@@ -468,6 +493,8 @@ export interface EstimatedYieldLine {
   principal: number
   rate: number
   amount: number
+  /** 定期锁仓时按实际天数 / 365，不按全年 */
+  term_days?: number
 }
 
 export interface EstimatedAnnualIncomeBreakdown {

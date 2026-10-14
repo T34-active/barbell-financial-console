@@ -2,21 +2,22 @@
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useFinanceStore } from '@/stores/finance'
-import type { FunFundChargePayment } from '@/types/finance'
+import type { FunFundCarryoverRule, FunFundChargePayment } from '@/types/finance'
+import { useFinanceFormat } from '@/composables/useFinanceFormat'
 import { formatMoney } from '@/utils/currency'
 import { beijingWallTime, todayBeijingDate } from '@/utils/datetime'
 import { formatPaydayZh, formatPaydayWithWeekday } from '@/utils/payday'
 import { add, round, sub } from '@/utils/decimal'
+import { FUN_FUND_CARRYOVER_OPTIONS, funFundCarryoverLabel } from '@/utils/salary-allocation'
 
 const store = useFinanceStore()
+const { moneyInBase } = useFinanceFormat()
 
 const funSpendAmount = ref(0)
-const yearMonth = computed(
-  () => store.openFunFundPeriod() ?? store.salary.history[0]?.year_month,
-)
-const funPeriod = computed(
-  () => store.openFunFundPeriod() ?? yearMonth.value ?? '',
-)
+const showCarryDialog = ref(false)
+const carryRule = ref<FunFundCarryoverRule>(store.settings.rules.carryover_rule)
+const yearMonth = computed(() => store.openFunFundPeriod() ?? store.salary.history[0]?.year_month)
+const funPeriod = computed(() => store.openFunFundPeriod() ?? yearMonth.value ?? '')
 const funAllocated = computed(() =>
   funPeriod.value ? store.funFundAllocatedForMonth(funPeriod.value) : 0,
 )
@@ -27,6 +28,9 @@ const reserve = computed(() => store.funFundReserve)
 const spendable = computed(() => store.funFundSpendable)
 const remainingAfterSpend = computed(() =>
   round(sub(spendable.value, funSpendAmount.value || 0), 2),
+)
+const alreadyCarried = computed(
+  () => store.getRecordByMonth(funPeriod.value)?.fun_fund_carried ?? false,
 )
 const primaryLine = computed(() => reserve.value.lines[0] ?? null)
 
@@ -60,7 +64,7 @@ function reimbursementText(payment: FunFundChargePayment, label: string) {
       ? `本周五 ${Number(month)}月${Number(day)}日`
       : formatPaydayWithWeekday(beijingWallTime(year, month, day))
   const amountDigits = Number.isInteger(payment.amount) ? 0 : 2
-  return `${label} ${periodMonth}月月费已扣 ${formatMoney(payment.amount, payment.currency, { digits: amountDigits })}（约 ${formatMoney(payment.amount_cny, 'CNY')}），${when}可向公司报销`
+  return `${label} ${periodMonth}月月费已扣 ${formatMoney(payment.amount, payment.currency, { digits: amountDigits })}（约 ${moneyInBase(payment.amount_cny, 'CNY')}），${when}可向公司报销`
 }
 
 async function handleFunSpend() {
@@ -70,7 +74,7 @@ async function handleFunSpend() {
   }
   try {
     await ElMessageBox.confirm(
-      `本次花销 ${formatMoney(funSpendAmount.value, 'CNY')}，扣完可支配还剩 ${formatMoney(remainingAfterSpend.value, 'CNY')}？`,
+      `本次花销 ${moneyInBase(funSpendAmount.value, 'CNY')}，扣完可支配还剩 ${moneyInBase(remainingAfterSpend.value, 'CNY')}？`,
       '记入花销',
       {
         confirmButtonText: '确认扣除',
@@ -93,7 +97,7 @@ async function handlePayCharge(chargeId: string) {
   if (!line) return
   try {
     await ElMessageBox.confirm(
-      `从快乐基金扣除 ${line.charge.label} ${formatMoney(line.charge.amount, line.charge.currency)}（约 ${formatMoney(line.reserveCny, 'CNY')}）？`,
+      `从快乐基金扣除 ${line.charge.label} ${formatMoney(line.charge.amount, line.charge.currency)}（约 ${moneyInBase(line.reserveCny, 'CNY')}）？`,
       line.due ? '扣除订阅' : '预扣订阅',
       {
         confirmButtonText: line.due ? '确认扣除' : '确认预扣',
@@ -103,7 +107,7 @@ async function handlePayCharge(chargeId: string) {
     )
     const result = store.payFunFundCharge(chargeId, funPeriod.value)
     ElMessage.success(
-      `已扣 ${formatMoney(result.amountCny, 'CNY')}，口袋剩 ${formatMoney(result.remaining, 'CNY')}`,
+      `已扣 ${moneyInBase(result.amountCny, 'CNY')}，口袋剩 ${moneyInBase(result.remaining, 'CNY')}`,
     )
   } catch (error) {
     if (error instanceof Error && error.message) {
@@ -118,7 +122,7 @@ async function handleMarkReimbursed(paymentId: string) {
   try {
     const pocketAfter = round(add(store.funFundPocket, row.payment.amount_cny), 2)
     await ElMessageBox.confirm(
-      `公司退回 ${formatMoney(row.payment.amount_cny, 'CNY')}。退回快乐基金口袋（之后约 ${formatMoney(pocketAfter, 'CNY')}），并冲掉这笔已记花销。`,
+      `公司退回 ${moneyInBase(row.payment.amount_cny, 'CNY')}。退回快乐基金口袋（之后约 ${moneyInBase(pocketAfter, 'CNY')}），并冲掉这笔已记花销。`,
       '报销到账',
       {
         confirmButtonText: '确认到账',
@@ -128,7 +132,7 @@ async function handleMarkReimbursed(paymentId: string) {
     )
     const result = store.markFunFundChargeReimbursed(paymentId)
     ElMessage.success(
-      `已退回 ${formatMoney(result.amountCny, 'CNY')}，口袋剩 ${formatMoney(result.remaining, 'CNY')}`,
+      `已退回 ${moneyInBase(result.amountCny, 'CNY')}，口袋剩 ${moneyInBase(result.remaining, 'CNY')}`,
     )
   } catch (error) {
     if (error instanceof Error && error.message) {
@@ -137,21 +141,32 @@ async function handleMarkReimbursed(paymentId: string) {
   }
 }
 
+function openCarryDialog() {
+  carryRule.value = store.settings.rules.carryover_rule
+  showCarryDialog.value = true
+}
+
+function carryoverSummary(result: {
+  toSafety: number
+  toSeed: number
+  toParents: number
+  toTravel: number
+  toFun: number
+}) {
+  const parts: string[] = []
+  if (result.toParents > 0) parts.push(`给爸妈 ${moneyInBase(result.toParents, 'CNY')}`)
+  if (result.toSafety > 0) parts.push(`安全垫 ${moneyInBase(result.toSafety, 'CNY')}`)
+  if (result.toSeed > 0) parts.push(`进攻 ${moneyInBase(result.toSeed, 'CNY')}`)
+  if (result.toTravel > 0) parts.push(`旅游 ${moneyInBase(result.toTravel, 'CNY')}`)
+  if (result.toFun > 0) parts.push(`留在口袋 ${moneyInBase(result.toFun, 'CNY')}`)
+  return parts.join(' / ') || '无剩余'
+}
+
 async function handleCarryOver() {
   try {
-    await ElMessageBox.confirm(
-      `将快乐基金剩余 ${formatMoney(store.funFundPocket, 'CNY')} 按规则结转？结转后不得再沉淀在现金池。`,
-      '月末结转',
-      {
-        confirmButtonText: '确认结转',
-        cancelButtonText: '取消',
-        type: 'warning',
-      },
-    )
-    const result = store.carryOverFunFund(funPeriod.value)
-    ElMessage.success(
-      `已结转 ${formatMoney(result.amount, 'CNY')}（安全垫 ${formatMoney(result.toSafety, 'CNY')} / 进攻 ${formatMoney(result.toSeed, 'CNY')}）`,
-    )
+    const result = store.carryOverFunFund(funPeriod.value, carryRule.value)
+    showCarryDialog.value = false
+    ElMessage.success(`已结转 ${moneyInBase(result.amount, 'CNY')}（${carryoverSummary(result)}）`)
   } catch (error) {
     if (error instanceof Error && error.message) {
       ElMessage.error(error.message)
@@ -170,7 +185,7 @@ function countdownText(days: number) {
   <div class="panel px-4 py-4 md:px-5">
     <h2 class="text-sm font-semibold">快乐基金口袋</h2>
     <p class="stat-num mt-1 text-2xl font-semibold">
-      {{ formatMoney(store.funFundPocket, 'CNY') }}
+      {{ moneyInBase(store.funFundPocket, 'CNY') }}
     </p>
     <p class="hint">口袋总额 · 含已锁订阅</p>
 
@@ -203,7 +218,7 @@ function countdownText(days: number) {
             </span>
           </p>
           <p class="hint">
-            约 {{ formatMoney(primaryLine.reserveCny, 'CNY') }} ·
+            约 {{ moneyInBase(primaryLine.reserveCny, 'CNY') }} ·
             {{ formatPaydayZh(primaryLine.billingDate) }} ·
             {{ countdownText(primaryLine.daysUntil) }}
           </p>
@@ -218,22 +233,22 @@ function countdownText(days: number) {
         </el-button>
       </div>
       <p v-if="reserve.shortfallCny > 0" class="hint text-risk">
-        差额 {{ formatMoney(reserve.shortfallCny, 'CNY') }} 未补齐，暂不可结转
+        差额 {{ moneyInBase(reserve.shortfallCny, 'CNY') }} 未补齐，暂不可结转
       </p>
     </div>
 
     <dl class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4">
       <div>
         <dt class="stat-label">账期额度</dt>
-        <dd class="stat-num mt-0.5 font-semibold">{{ formatMoney(funAllocated, 'CNY') }}</dd>
+        <dd class="stat-num mt-0.5 font-semibold">{{ moneyInBase(funAllocated, 'CNY') }}</dd>
       </div>
       <div>
         <dt class="stat-label">已记花销</dt>
-        <dd class="stat-num mt-0.5 font-semibold">{{ formatMoney(funSpentRecorded, 'CNY') }}</dd>
+        <dd class="stat-num mt-0.5 font-semibold">{{ moneyInBase(funSpentRecorded, 'CNY') }}</dd>
       </div>
       <div>
         <dt class="stat-label">可支配</dt>
-        <dd class="stat-num mt-0.5 font-semibold">{{ formatMoney(spendable, 'CNY') }}</dd>
+        <dd class="stat-num mt-0.5 font-semibold">{{ moneyInBase(spendable, 'CNY') }}</dd>
       </div>
       <div>
         <dt class="stat-label">账期</dt>
@@ -242,8 +257,8 @@ function countdownText(days: number) {
     </dl>
 
     <p class="hint mt-2">
-      订阅先锁后花，未扣前不可结转；结转规则：{{
-        store.settings.rules.carryover_rule === 'split_50_50' ? '50/50 安全垫 + 进攻' : '全额进攻'
+      订阅先锁后花，未扣前不可结转；默认去向：{{
+        funFundCarryoverLabel(store.settings.rules.carryover_rule)
       }}
     </p>
     <div class="mt-3 space-y-1.5">
@@ -260,8 +275,8 @@ function countdownText(days: number) {
         </el-button>
         <el-button
           plain
-          :disabled="store.funFundPocket <= 0 || reserve.reserveCny > 0"
-          @click="handleCarryOver"
+          :disabled="alreadyCarried || store.funFundPocket <= 0 || reserve.reserveCny > 0"
+          @click="openCarryDialog"
         >
           月末结转
         </el-button>
@@ -271,8 +286,34 @@ function countdownText(days: number) {
         class="hint stat-num"
         :class="remainingAfterSpend >= 0 ? '' : 'text-alert'"
       >
-        扣后可支配 {{ formatMoney(remainingAfterSpend, 'CNY') }}
+        扣后可支配 {{ moneyInBase(remainingAfterSpend, 'CNY') }}
       </p>
     </div>
+
+    <el-dialog v-model="showCarryDialog" title="月末结转" width="92%" class="max-w-md">
+      <p class="mb-3 text-sm text-ink-muted">
+        将剩余 {{ moneyInBase(store.funFundPocket, 'CNY') }} 转到哪一项？
+      </p>
+      <el-select v-model="carryRule" placeholder="选择结转去向" class="w-full!">
+        <el-option
+          v-for="item in FUN_FUND_CARRYOVER_OPTIONS"
+          :key="item.value"
+          :label="item.label"
+          :value="item.value"
+        >
+          <div class="flex flex-col py-0.5">
+            <span>{{ item.label }}</span>
+            <span class="text-xs text-ink-muted">{{ item.hint }}</span>
+          </div>
+        </el-option>
+      </el-select>
+      <p class="mt-2 text-xs text-ink-muted">
+        {{ FUN_FUND_CARRYOVER_OPTIONS.find((item) => item.value === carryRule)?.hint }}
+      </p>
+      <template #footer>
+        <el-button @click="showCarryDialog = false">取消</el-button>
+        <el-button type="warning" @click="handleCarryOver">确认结转</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>

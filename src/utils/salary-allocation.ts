@@ -1,5 +1,6 @@
 import dayjs from 'dayjs'
 import type {
+  FunFundCarryoverRule,
   SalaryAllocationLine,
   SalaryAllocationMode,
   SalaryAllocationPreview,
@@ -36,6 +37,14 @@ const LINE_META: Record<SalaryLineKey, { label: string; destination: string; not
   },
 }
 
+export const SALARY_LINE_KEYS: SalaryLineKey[] = [
+  'parents',
+  'safety_pad',
+  'us_seed',
+  'fun_fund',
+  'travel_fund',
+]
+
 const ALLOCATE_ORDER: SalaryLineKey[] = [
   'parents',
   'safety_pad',
@@ -43,6 +52,80 @@ const ALLOCATE_ORDER: SalaryLineKey[] = [
   'travel_fund',
   'fun_fund',
 ]
+
+export function salaryLineMeta(key: SalaryLineKey) {
+  return LINE_META[key]
+}
+
+export const FUN_FUND_CARRYOVER_OPTIONS: Array<{
+  value: FunFundCarryoverRule
+  label: string
+  hint: string
+}> = [
+  {
+    value: 'split_50_50',
+    label: '50/50 安全垫 + 进攻',
+    hint: '一半进应急金，一半进美股种子',
+  },
+  {
+    value: 'parents',
+    label: LINE_META.parents.label,
+    hint: LINE_META.parents.destination,
+  },
+  {
+    value: 'safety_pad',
+    label: LINE_META.safety_pad.label,
+    hint: LINE_META.safety_pad.destination,
+  },
+  {
+    value: 'us_seed',
+    label: LINE_META.us_seed.label,
+    hint: LINE_META.us_seed.destination,
+  },
+  {
+    value: 'fun_fund',
+    label: LINE_META.fun_fund.label,
+    hint: '留在下月口袋，本月标已结转',
+  },
+  {
+    value: 'travel_fund',
+    label: LINE_META.travel_fund.label,
+    hint: LINE_META.travel_fund.destination,
+  },
+]
+
+export function normalizeFunFundCarryoverRule(raw: unknown): FunFundCarryoverRule {
+  if (raw === 'surplus_happy_fund_to_offensive' || raw === 'us_seed') return 'us_seed'
+  if (raw === 'split_50_50') return 'split_50_50'
+  if (SALARY_LINE_KEYS.includes(raw as SalaryLineKey)) return raw as SalaryLineKey
+  return 'split_50_50'
+}
+
+export function funFundCarryoverLabel(rule: FunFundCarryoverRule): string {
+  return FUN_FUND_CARRYOVER_OPTIONS.find((item) => item.value === rule)?.label ?? '50/50 安全垫 + 进攻'
+}
+
+export function splitFunFundCarryover(remaining: number, rule: FunFundCarryoverRule) {
+  const zero = {
+    to_safety: 0,
+    to_seed: 0,
+    to_parents: 0,
+    to_travel: 0,
+    to_fun: 0,
+  }
+  const amount = round(Math.max(0, remaining), 2)
+  if (amount <= 0) return zero
+  if (rule === 'split_50_50') {
+    const { toSafety, toSeed } = splitHalf(amount)
+    return { ...zero, to_safety: toSafety, to_seed: toSeed }
+  }
+  if (rule === 'parents') return { ...zero, to_parents: amount }
+  if (rule === 'safety_pad') return { ...zero, to_safety: amount }
+  if (rule === 'us_seed') return { ...zero, to_seed: amount }
+  if (rule === 'fun_fund') return { ...zero, to_fun: amount }
+  if (rule === 'travel_fund') return { ...zero, to_travel: amount }
+  return zero
+}
 
 /** 分单位整数分摊，最后一项吃残差，保证合计等于总额 */
 export function allocateByRatios(

@@ -1,9 +1,4 @@
-import {
-  defineConfig,
-  presetAttributify,
-  presetIcons,
-  presetUno,
-} from 'unocss'
+import { defineConfig, presetAttributify, presetIcons, presetUno } from 'unocss'
 
 export default defineConfig({
   presets: [
@@ -13,8 +8,7 @@ export default defineConfig({
       scale: 1.1,
       warn: true,
       collections: {
-        carbon: () =>
-          import('@iconify-json/carbon/icons.json').then((m) => m.default),
+        carbon: () => import('@iconify-json/carbon/icons.json').then((m) => m.default),
       },
     }),
   ],
@@ -66,7 +60,7 @@ export default defineConfig({
   shortcuts: {
     // 不铺实色底，让 body 的亮/暗径向渐变透出来
     'page-shell': 'min-h-screen bg-transparent text-ink font-sans',
-    'panel': 'bg-surface-raised border border-surface-line rounded-xl',
+    panel: 'bg-surface-raised border border-surface-line rounded-xl',
     'stat-num': 'font-mono tabular-nums tracking-tight',
     'section-title': 'font-display text-xl md:text-2xl font-semibold tracking-tight',
   },

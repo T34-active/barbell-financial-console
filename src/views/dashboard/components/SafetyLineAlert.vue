@@ -2,8 +2,11 @@
 import { useFinanceStore } from '@/stores/finance'
 import { formatMoney } from '@/utils/currency'
 import { sub } from '@/utils/decimal'
+import { isTermLocked } from '@/utils/term-lock'
 
 const store = useFinanceStore()
+const hsbcLock = computed(() => store.hsbcAccount?.term_lock)
+const hsbcLocked = computed(() => isTermLocked(hsbcLock.value))
 </script>
 
 <template>
@@ -41,6 +44,12 @@ const store = useFinanceStore()
     >
       <span class="status-dot bg-current" />
       {{ store.isSafetyLineBreached ? '预警触发' : '红线安全' }}
+    </p>
+    <p v-if="hsbcLock && hsbcLocked" class="text-xs text-ink-muted">
+      锁仓至 {{ hsbcLock.maturity_date }}，到期前不可动用
+    </p>
+    <p v-else-if="hsbcLock" class="text-xs text-ink-muted">
+      定期已于 {{ hsbcLock.maturity_date }} 到期，入账后可动用
     </p>
   </section>
 </template>
