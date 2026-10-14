@@ -49,10 +49,12 @@ src/
   data/seed.ts          # 初始种子数据
   stores/finance.ts     # Pinia 状态 / 哑铃 / 工资分配
   utils/salary-allocation.ts  # 百分比拆分与补仓规则
-  components/           # 总览 / 账户 / 哑铃 / 工资组件
-  views/                # 总览 · 账户 · 工资 · 设置
+  components/           # 跨页公共组件（卡片 / 输入框 / 汇率条等）
+  views/                # 按路由分目录：index.vue + 页面专属 components/
   layouts/              # PC + H5 响应式壳层
 ```
+
+账户页为 `/accounts/rmb|hkd|us|neutral` 子路由；GitHub Pages 深链依赖构建时生成的 `404.html`。
 
 ## 数据说明
 

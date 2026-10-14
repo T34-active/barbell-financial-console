@@ -10,6 +10,7 @@ import type {
 import { stockCostBasis, stockMarketValue } from '@/utils/currency'
 import { isNavFundAccount } from '@/utils/fund-nav'
 import { add, div, mul, sub } from '@/utils/decimal'
+import { demandBalance, lockedPrincipal, maturityInterest, termDays } from '@/utils/term-lock'
 import type { FinanceRefs } from './state'
 
 export function createValuation(
@@ -167,13 +168,44 @@ export function createValuation(
   const estimatedAnnualIncomeBreakdown = computed<EstimatedAnnualIncomeBreakdown>(() => {
     const lines: EstimatedAnnualIncomeBreakdown['lines'] = []
 
-    const pushCash = (item: {
-      id: string
-      name: string
-      amount: number
-      currency: BaseCurrency
-      yield_rate?: number
-    }) => {
+    const pushCash = (item: PoolAccount) => {
+      const lock = item.term_lock
+      const termRate = lock?.rate ?? 0
+      const lockedDays = lock && termRate > 0 ? termDays(lock.start_date, lock.maturity_date) : 0
+      if (lock && termRate > 0 && lockedDays > 0) {
+        let yielded = 0
+        const termBase = lockedPrincipal(item.amount, lock)
+        const native = maturityInterest(termBase, termRate, lock.start_date, lock.maturity_date)
+        const amount = toBase(native, item.currency)
+        if (amount > 0) {
+          lines.push({
+            id: `${item.id}:term`,
+            name: item.name,
+            kind: 'cash',
+            principal: toBase(termBase, item.currency),
+            rate: termRate,
+            amount,
+            term_days: lockedDays,
+          })
+          yielded = add(yielded, amount)
+        }
+        const demand = demandBalance(item.amount, lock)
+        if (item.yield_rate && demand > 0) {
+          const demandAmount = toBase(mul(demand, item.yield_rate), item.currency)
+          if (demandAmount > 0) {
+            lines.push({
+              id: `${item.id}:demand`,
+              name: `${item.name} · 活期`,
+              kind: 'cash',
+              principal: toBase(demand, item.currency),
+              rate: item.yield_rate,
+              amount: demandAmount,
+            })
+            yielded = add(yielded, demandAmount)
+          }
+        }
+        return yielded
+      }
       if (!item.yield_rate) return 0
       const principal = toBase(item.amount, item.currency)
       const amount = toBase(mul(item.amount, item.yield_rate), item.currency)

@@ -43,7 +43,7 @@ function normalizeCharge(
     amount: Number(item.amount) > 0 ? Number(item.amount) : fallback.amount,
     currency: item.currency || fallback.currency,
     billing_day: billingDay,
-    enabled: item.enabled !== false,
+    enabled: item.enabled,
   }
 }
 

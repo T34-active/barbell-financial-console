@@ -143,6 +143,7 @@ export function createPersistence(
     if (!settings.value.fx_to_hkd.SGD) {
       settings.value.fx_to_hkd.SGD = cloneSeed().settings.fx_to_hkd.SGD
     }
+    alignPoolClassification(settings.value, accounts.value)
     syncYulibaoFromBuckets()
     syncCryptoYieldRates()
   }
@@ -217,6 +218,7 @@ export function createPersistence(
     if (!settings.value.fx_to_hkd.SGD) {
       settings.value.fx_to_hkd.SGD = cloneSeed().settings.fx_to_hkd.SGD
     }
+    alignPoolClassification(settings.value, accounts.value)
     applyYuanGouKnownFixes()
     syncYulibaoFromBuckets()
     syncCryptoYieldRates()

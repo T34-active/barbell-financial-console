@@ -11,7 +11,12 @@ import type { YuanGouOutcome, YuanGouRecord } from '@/types/finance'
 import FormulaTooltip from '@/components/accounts/FormulaTooltip.vue'
 import HtxDailyYieldDialog from '@/components/accounts/HtxDailyYieldDialog.vue'
 
+const props = defineProps<{
+  venueId: string
+}>()
+
 const store = useFinanceStore()
+const isOkx = computed(() => props.venueId === 'okx_earn_usdt')
 const now = useNow({ interval: 1000 })
 const status = computed(() => store.htxYieldAt(now.value))
 const htxHourlyRateText = computed(() => htxHourlyRate(status.value.rate).toFixed(9))
@@ -30,8 +35,14 @@ function defaultCheckInForMonth(monthKey: string) {
   return lastDayOfMonth(monthKey)
 }
 
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/
+
+function isDateKey(value: unknown): value is string {
+  return typeof value === 'string' && DATE_KEY_RE.test(value)
+}
+
 const selectedMonthKey = ref(currentYearMonth())
-const checkInDate = ref(todayKey())
+const checkInDate = ref<string | null>(todayKey())
 const htxDraft = ref(store.htxEarnUsdt)
 const okxDraft = ref(store.okxEarnUsdt)
 
@@ -52,10 +63,18 @@ const period = computed(() => store.yuanGouStatsForMonth(selectedMonthKey.value)
 const tableScope = ref<'month' | 'total'>('month')
 const canGoNextMonth = computed(() => selectedMonthKey.value < currentYearMonth())
 
-const isBackfill = computed(() => checkInDate.value !== todayKey())
-const dateAlreadyRecorded = computed(() =>
-  store.yuanGou.history.some((item) => item.date === checkInDate.value),
+const hasCheckInDate = computed(() => isDateKey(checkInDate.value))
+const isBackfill = computed(() => hasCheckInDate.value && checkInDate.value !== todayKey())
+const dateAlreadyRecorded = computed(
+  () =>
+    hasCheckInDate.value && store.yuanGou.history.some((item) => item.date === checkInDate.value),
 )
+const canCheckIn = computed(() => hasCheckInDate.value && !dateAlreadyRecorded.value)
+
+watch(checkInDate, (value) => {
+  if (isDateKey(value)) return
+  checkInDate.value = defaultCheckInForMonth(selectedMonthKey.value)
+})
 
 const yuanGouTable = computed(() => {
   const seen = new Set<string>()
@@ -124,14 +143,19 @@ function fundedLabel(from: YuanGouRecord['funded_from'] | string) {
 }
 
 async function checkIn(outcome: YuanGouOutcome) {
+  if (!isDateKey(checkInDate.value)) {
+    ElMessage.warning('请先选择日期')
+    return
+  }
   try {
+    const date = checkInDate.value
     const cost = period.value.dailyCostCny
     const reward = period.value.rewardUsdt
     const verb = isBackfill.value ? '补录' : '打卡'
     const confirmText =
       outcome === 'none'
-        ? `${verb}「未购买」：当天没买，不计花费？`
-        : `${verb}「买了」：支付宝付 ¥${cost}，HTX +${reward}U？`
+        ? `${verb} ${date}「未购买」：当天没买，不计花费`
+        : `${verb} ${date}「买了」：支付宝付 ¥${cost}，HTX +${reward}U`
     await ElMessageBox.confirm(confirmText, '一元购确认', {
       confirmButtonText: '确认',
       cancelButtonText: '取消',
@@ -139,7 +163,7 @@ async function checkIn(outcome: YuanGouOutcome) {
     })
 
     const result = store.recordYuanGou({
-      date: checkInDate.value,
+      date,
       outcome,
     })
     let msg =
@@ -183,9 +207,13 @@ async function reviseRow(row: unknown, outcome: YuanGouOutcome) {
 
 function saveBalances() {
   try {
+    if (isOkx.value) {
+      store.updateOkxEarnAmount(okxDraft.value)
+      ElMessage.success('OKX 余额已更新')
+      return
+    }
     store.updateHtxEarnAmount(htxDraft.value)
-    store.updateOkxEarnAmount(okxDraft.value)
-    ElMessage.success('HTX / OKX 余额已更新')
+    ElMessage.success('HTX 余额已更新')
     if (store.htxYieldStatus.plan.canExecute) {
       ElMessage.warning('HTX 已触达降息线，请执行溢流转存')
     }
@@ -229,13 +257,17 @@ async function handleOverflow() {
   <section class="panel space-y-4 px-4 py-5 md:px-5">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h2 class="text-base font-semibold">加密赌注池 · HTX / OKX</h2>
-        <p class="mt-1 text-xs text-ink-muted">
+        <h2 class="text-base font-semibold">加密赌注池 · {{ isOkx ? 'OKX' : 'HTX' }}</h2>
+        <p v-if="isOkx" class="mt-1 text-xs text-ink-muted">
+          活期承接 HTX 溢流 · 年化 {{ formatPercent(store.settings.rules.okx_yield_rate) }}
+        </p>
+        <p v-else class="mt-1 text-xs text-ink-muted">
           一元购：支付宝 ¥{{ period.dailyCostCny }} → {{ period.rewardUsdt }}U · 仅「买了 /
           未购买」两态
         </p>
       </div>
       <p
+        v-if="!isOkx"
         class="rounded-lg px-2 py-1 text-xs font-medium"
         :class="status.highYield ? 'bg-safe-soft text-safe' : 'bg-alert-soft text-alert'"
       >
@@ -243,8 +275,8 @@ async function handleOverflow() {
       </p>
     </div>
 
-    <div class="grid gap-3 sm:grid-cols-3">
-      <div class="rounded-lg bg-surface px-3 py-3">
+    <div class="grid gap-3 sm:grid-cols-2">
+      <div v-if="!isOkx" class="rounded-lg bg-surface px-3 py-3">
         <p class="text-xs text-ink-muted">HTX 赚币（持仓）</p>
         <p class="stat-num mt-1 text-xl font-semibold">
           {{ formatMoney(store.htxEarnUsdt, 'USDT') }}
@@ -321,7 +353,7 @@ async function handleOverflow() {
           <template v-else>下一笔发放 {{ formatBeijingHourLabel(status.nextPayoutAt) }}</template>
         </p>
       </div>
-      <div class="rounded-lg bg-surface px-3 py-3">
+      <div v-else class="rounded-lg bg-surface px-3 py-3">
         <p class="text-xs text-ink-muted">OKX 活期（持仓）</p>
         <p class="stat-num mt-1 text-xl font-semibold">
           {{ formatMoney(store.okxEarnUsdt, 'USDT') }}
@@ -342,7 +374,7 @@ async function handleOverflow() {
       </div>
     </div>
 
-    <div class="grid gap-3 md:grid-cols-2">
+    <div v-if="!isOkx" class="grid gap-3 md:grid-cols-2">
       <div class="rounded-lg border border-accent/25 bg-accent-soft/30 px-3 py-3">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <p class="text-sm font-semibold text-accent">
@@ -477,31 +509,37 @@ async function handleOverflow() {
     </div>
 
     <div class="flex flex-wrap items-end gap-2">
-      <div>
+      <div v-if="!isOkx">
         <label class="mb-1 block text-xs text-ink-muted">HTX 余额</label>
         <AmountInput v-model="htxDraft" :min="0" class="w-36!" />
       </div>
-      <div>
+      <div v-else>
         <label class="mb-1 block text-xs text-ink-muted">OKX 余额</label>
         <AmountInput v-model="okxDraft" :min="0" class="w-36!" />
       </div>
       <el-button plain @click="saveBalances">保存余额</el-button>
-      <el-button type="warning" :disabled="!status.plan.needsAction" @click="handleOverflow">
+      <el-button
+        v-if="!isOkx"
+        type="warning"
+        :disabled="!status.plan.needsAction"
+        @click="handleOverflow"
+      >
         执行溢流转存
       </el-button>
     </div>
 
-    <p v-if="status.plan.needsAction" class="text-xs text-ink-muted">
+    <p v-if="!isOkx && status.plan.needsAction" class="text-xs text-ink-muted">
       {{ status.plan.reason }}
     </p>
 
-    <div class="space-y-3 border-t border-surface-line pt-3">
+    <div v-if="!isOkx" class="space-y-3 border-t border-surface-line pt-3">
       <div>
         <label class="mb-1 block text-xs text-ink-muted">打卡 / 补录日期</label>
         <el-date-picker
           v-model="checkInDate"
           type="date"
           value-format="YYYY-MM-DD"
+          :clearable="false"
           :disabled-date="disableFutureDate"
           placeholder="选择日期"
           class="w-44!"
@@ -513,8 +551,11 @@ async function handleOverflow() {
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
+        <span v-if="!hasCheckInDate" class="rounded-lg bg-risk-soft px-2 py-1 text-xs text-risk">
+          请先选择日期
+        </span>
         <span
-          v-if="dateAlreadyRecorded"
+          v-else-if="dateAlreadyRecorded"
           class="rounded-lg bg-safe-soft px-2 py-1 text-xs text-safe"
         >
           {{ checkInDate }} 已打卡
@@ -523,10 +564,10 @@ async function handleOverflow() {
           {{ isBackfill ? '待补录' : '今日未打卡' }} · {{ checkInDate }}
         </span>
 
-        <el-button :disabled="dateAlreadyRecorded" @click="checkIn('none')">
+        <el-button :disabled="!canCheckIn" @click="checkIn('none')">
           {{ isBackfill ? '补录：未购买' : '未购买' }}
         </el-button>
-        <el-button type="primary" :disabled="dateAlreadyRecorded" @click="checkIn('hit')">
+        <el-button type="primary" :disabled="!canCheckIn" @click="checkIn('hit')">
           {{ isBackfill ? '补录：买了' : '买了（支付宝¥1→+1U）' }}
         </el-button>
       </div>
@@ -616,7 +657,7 @@ async function handleOverflow() {
     </div>
 
     <ul
-      v-if="store.cryptoOps.overflow_log.length"
+      v-if="!isOkx && store.cryptoOps.overflow_log.length"
       class="space-y-2 border-t border-surface-line pt-3"
     >
       <li class="text-xs font-medium text-ink">溢流日志</li>

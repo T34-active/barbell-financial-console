@@ -16,9 +16,10 @@ import {
   buildSalaryAllocation,
   createId,
   currentYearMonth,
+  normalizeFunFundCarryoverRule,
   ratiosAreValid,
   ratiosWithoutParents,
-  splitHalf,
+  splitFunFundCarryover,
 } from '@/utils/salary-allocation'
 import type { FinanceRefs } from './state'
 
@@ -155,6 +156,14 @@ export function createSalary(
           salary.value.buckets.cash_observation = Math.max(
             0,
             sub(salary.value.buckets.cash_observation, seedLeft),
+          )
+          salary.value.buckets.travel_fund_pocket = Math.max(
+            0,
+            sub(salary.value.buckets.travel_fund_pocket ?? 0, carry.to_travel ?? 0),
+          )
+          salary.value.buckets.fun_fund_pocket = Math.max(
+            0,
+            sub(salary.value.buckets.fun_fund_pocket, carry.to_fun ?? 0),
           )
           salary.value.carryover_history = salary.value.carryover_history.filter(
             (item) => item.id !== carry.id,
@@ -542,7 +551,7 @@ export function createSalary(
     return { remaining: next, spent, allocated: cap }
   }
 
-  function carryOverFunFund(yearMonth = currentYearMonth()) {
+  function carryOverFunFund(yearMonth = currentYearMonth(), rule?: FunFundCarryoverRule) {
     const record = getRecordByMonth(yearMonth)
     if (!record) throw new Error('该月无工资入账记录')
     if (record.fun_fund_carried) throw new Error('该月快乐基金已结转')
@@ -554,42 +563,65 @@ export function createSalary(
     }
 
     const remaining = salary.value.buckets.fun_fund_pocket
+    const resolved = normalizeFunFundCarryoverRule(rule ?? settings.value.rules.carryover_rule)
     if (remaining <= 0) {
       record.fun_fund_carried = true
-      return { amount: 0, toSafety: 0, toSeed: 0 }
+      return {
+        amount: 0,
+        rule: resolved,
+        toSafety: 0,
+        toSeed: 0,
+        toParents: 0,
+        toTravel: 0,
+        toFun: 0,
+      }
     }
 
-    const rule = settings.value.rules.carryover_rule
-    let toSafety = 0
-    let toSeed = 0
-    if (rule === 'surplus_happy_fund_to_offensive') {
-      toSeed = remaining
-    } else {
-      ;({ toSafety, toSeed } = splitHalf(remaining))
-    }
-
-    salary.value.buckets.fun_fund_pocket = 0
-    salary.value.buckets.emergency_reserve = add(salary.value.buckets.emergency_reserve, toSafety)
-    // 结转进攻端：若 PE 高估则进观察仓，否则进美股种子
+    const split = splitFunFundCarryover(remaining, resolved)
+    salary.value.buckets.fun_fund_pocket = split.to_fun
+    salary.value.buckets.emergency_reserve = add(
+      salary.value.buckets.emergency_reserve,
+      split.to_safety,
+    )
     if (isPeGuardActive.value) {
-      salary.value.buckets.cash_observation = add(salary.value.buckets.cash_observation, toSeed)
+      salary.value.buckets.cash_observation = add(
+        salary.value.buckets.cash_observation,
+        split.to_seed,
+      )
     } else {
-      salary.value.buckets.us_seed_parking = add(salary.value.buckets.us_seed_parking, toSeed)
+      salary.value.buckets.us_seed_parking = add(salary.value.buckets.us_seed_parking, split.to_seed)
     }
-    syncYulibaoFromBuckets()
+    salary.value.buckets.travel_fund_pocket = add(
+      salary.value.buckets.travel_fund_pocket ?? 0,
+      split.to_travel,
+    )
+    if (split.to_safety > 0 || split.to_seed > 0 || split.to_travel > 0) {
+      syncYulibaoFromBuckets()
+    }
 
     record.fun_fund_carried = true
     salary.value.carryover_history.unshift({
       id: createId('carry'),
       year_month: yearMonth,
       amount: remaining,
-      rule,
-      to_safety: toSafety,
-      to_seed: toSeed,
+      rule: resolved,
+      to_safety: split.to_safety,
+      to_seed: split.to_seed,
+      to_parents: split.to_parents,
+      to_travel: split.to_travel,
+      to_fun: split.to_fun,
       created_at: dayjs().toISOString(),
     })
 
-    return { amount: remaining, toSafety, toSeed }
+    return {
+      amount: remaining,
+      rule: resolved,
+      toSafety: split.to_safety,
+      toSeed: split.to_seed,
+      toParents: split.to_parents,
+      toTravel: split.to_travel,
+      toFun: split.to_fun,
+    }
   }
 
   function payFunFundCharge(chargeId: string, yearMonth = currentYearMonth()) {
@@ -766,7 +798,7 @@ export function createSalary(
   }
 
   function updateCarryoverRule(rule: FunFundCarryoverRule) {
-    settings.value.rules.carryover_rule = rule
+    settings.value.rules.carryover_rule = normalizeFunFundCarryoverRule(rule)
   }
 
   return {

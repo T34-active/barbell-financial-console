@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import NetWorthHero from '@/components/summary/NetWorthHero.vue'
-import SafetyLineAlert from '@/components/summary/SafetyLineAlert.vue'
-import SavingsRateBanner from '@/components/summary/SavingsRateBanner.vue'
-import CryptoStakeBanner from '@/components/summary/CryptoStakeBanner.vue'
-import BarbellGauge from '@/components/barbell/BarbellGauge.vue'
+import NetWorthHero from './components/NetWorthHero.vue'
+import SafetyLineAlert from './components/SafetyLineAlert.vue'
+import SavingsRateBanner from './components/SavingsRateBanner.vue'
+import CryptoStakeBanner from './components/CryptoStakeBanner.vue'
+import BarbellGauge from './components/BarbellGauge.vue'
 import PoolAccountCard from '@/components/accounts/PoolAccountCard.vue'
 import StockHoldingCard from '@/components/accounts/StockHoldingCard.vue'
 import { useFinanceStore } from '@/stores/finance'
@@ -34,7 +34,7 @@ const nextPayday = computed(() =>
   <div class="space-y-4">
     <div class="flex flex-wrap items-baseline justify-between gap-2">
       <h1 class="section-title">资产总览</h1>
-      <p class="hint">
+      <p class="text-xs text-ink-muted">
         <template v-if="nextPayday.isToday">
           今日发薪 · 账期 {{ nextPayday.periodYearMonth }}
         </template>
@@ -42,7 +42,12 @@ const nextPayday = computed(() =>
           工资应于 {{ nextPayday.label }} 到账，待补录
         </template>
         <template v-else>下次发薪 {{ nextPayday.label }}</template>
-        <RouterLink to="/accounts" class="ml-3 text-ink hover:underline">全部账户 →</RouterLink>
+        <RouterLink
+          to="/accounts"
+          class="ml-3 font-medium text-accent underline-offset-2 hover:underline"
+        >
+          全部账户 →
+        </RouterLink>
       </p>
     </div>
 

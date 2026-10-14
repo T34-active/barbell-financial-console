@@ -114,9 +114,10 @@ export function createYuanGou(
     purchased?: boolean
     note?: string
   }) {
-    const date = input?.date ?? todayDateKey()
+    const rawDate = input?.date
+    const date = rawDate === undefined ? todayDateKey() : String(rawDate ?? '').trim()
     if (!isValidDateKey(date)) {
-      throw new Error('日期格式须为 YYYY-MM-DD')
+      throw new Error(rawDate ? '日期格式须为 YYYY-MM-DD' : '请先选择打卡日期')
     }
     if (date > todayDateKey()) {
       throw new Error('不能打卡未来日期')

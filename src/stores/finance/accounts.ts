@@ -1,7 +1,9 @@
 import dayjs from 'dayjs'
-import type { FundLot, PoolAccount, PoolKey, UsStockHolding } from '@/types/finance'
+import type { FundLot, PoolAccount, PoolKey, TermLock, UsStockHolding } from '@/types/finance'
 import { parseBeijingDateTime } from '@/utils/datetime'
 import { add, div, mul, round, sub } from '@/utils/decimal'
+import { holdingAfterBuy } from '@/utils/stock-holdings'
+import { demandBalance, isTermLocked, isYmd, lockedPrincipal, termDays } from '@/utils/term-lock'
 import { isNavFundAccount } from '@/utils/fund-nav'
 import {
   applyFundHoldingsFromLots,
@@ -26,7 +28,13 @@ export function createAccounts(
       const stock = accounts.value.us_stock_pool.find((item) => item.id === row.id)
       if (!stock) continue
       if (row.market_price <= 0) continue
-      stock.market_price = row.market_price
+      const price = round(row.market_price, 2)
+      const unchanged = stock.market_price != null && Math.abs(stock.market_price - price) < 0.001
+      if (!unchanged) {
+        stock.price_session = undefined
+        stock.regular_price = undefined
+      }
+      stock.market_price = price
       stock.price_updated_at = now
     }
   }
@@ -49,6 +57,17 @@ export function createAccounts(
       stock.shares = round(row.shares, 4)
       stock.cost_price = round(row.cost_price, 2)
     }
+  }
+
+  /** 补仓：股数累加，持仓价按原成本与本次成交额摊薄 */
+  function addToStockHolding(id: string, buyShares: number, buyPrice: number) {
+    const stock = accounts.value.us_stock_pool.find((item) => item.id === id)
+    if (!stock) throw new Error(`未找到持仓 ${id}`)
+    if (!(buyShares > 0)) throw new Error(`${stock.symbol} 买入数量须大于 0`)
+    if (!(buyPrice > 0)) throw new Error(`${stock.symbol} 成交价须大于 0`)
+    const next = holdingAfterBuy(stock.shares, stock.cost_price, buyShares, buyPrice)
+    stock.shares = next.shares
+    stock.cost_price = next.cost_price
   }
 
   function ensureClassId(list: string[], id: string) {
@@ -95,16 +114,80 @@ export function createAccounts(
     }
   }
 
-  function updatePoolAmount(pool: Exclude<PoolKey, 'us_stock_pool'>, id: string, amount: number) {
-    if (!(amount >= 0)) throw new Error('余额不能为负')
+  function findPoolAccount(pool: Exclude<PoolKey, 'us_stock_pool'>, id: string) {
     const target = accounts.value[pool].find((item) => item.id === id)
     if (!target) throw new Error(`未找到账户 ${id}`)
+    return target
+  }
+
+  /** 到期前余额不能低于定期本金；活期可以存入取出 */
+  function assertCanReduce(account: PoolAccount, nextAmount: number) {
+    if (!isTermLocked(account.term_lock)) return
+    const floor = round(lockedPrincipal(account.amount, account.term_lock), 2)
+    if (nextAmount + 1e-9 >= floor) return
+    const demand = demandBalance(account.amount, account.term_lock)
+    throw new Error(
+      `${account.name} 定期锁仓中，只能动活期 ${demand} ${account.currency}，${account.term_lock!.maturity_date} 前不能动定期本金`,
+    )
+  }
+
+  function updatePoolAmount(pool: Exclude<PoolKey, 'us_stock_pool'>, id: string, amount: number) {
+    if (!(amount >= 0)) throw new Error('余额不能为负')
+    const target = findPoolAccount(pool, id)
     const next = round(amount, 2)
+    assertCanReduce(target, next)
     target.amount = next
     target.amount_updated_at = dayjs().toISOString()
     if (pool === 'rmb_pool' && id === 'yulibao') {
       applyYulibaoTotal(next)
     }
+  }
+
+  function setTermLock(pool: Exclude<PoolKey, 'us_stock_pool'>, id: string, input: TermLock) {
+    const target = findPoolAccount(pool, id)
+    if (target.term_lock) throw new Error(`${target.name} 已有定期锁仓`)
+    const start = input.start_date.trim()
+    const maturity = input.maturity_date.trim()
+    if (!isYmd(start) || !isYmd(maturity)) throw new Error('日期须为 YYYY-MM-DD')
+    if (!(termDays(start, maturity) > 0)) throw new Error('到期日须晚于起息日')
+    const rate = round(input.rate ?? 0, 4)
+    if (!(rate > 0) || rate > 1) throw new Error('定期年化须在 0%–100% 之间')
+    target.term_lock = {
+      start_date: start,
+      maturity_date: maturity,
+      principal: round(target.amount, 2),
+      rate,
+    }
+  }
+
+  /** 提前支取：解除锁仓，不加利息，余额不动 */
+  function breakTermLock(pool: Exclude<PoolKey, 'us_stock_pool'>, id: string) {
+    const target = findPoolAccount(pool, id)
+    if (!target.term_lock) throw new Error(`${target.name} 没有定期锁仓`)
+    if (!isTermLocked(target.term_lock)) {
+      throw new Error(`${target.name} 已到到期日，请使用到期入账`)
+    }
+    delete target.term_lock
+  }
+
+  /**
+   * 到期入账：仅北京时间已到到期日。利息由调用方确认（可改），然后解锁。
+   */
+  function creditTermMaturity(
+    pool: Exclude<PoolKey, 'us_stock_pool'>,
+    id: string,
+    interest: number,
+  ) {
+    const target = findPoolAccount(pool, id)
+    if (!target.term_lock) throw new Error(`${target.name} 没有定期锁仓`)
+    if (isTermLocked(target.term_lock)) {
+      throw new Error(`${target.name} 未到到期日 ${target.term_lock.maturity_date}`)
+    }
+    const gain = round(interest, 2)
+    if (!(gain >= 0)) throw new Error('入账利息不能为负')
+    target.amount = round(add(target.amount, gain), 2)
+    target.amount_updated_at = dayjs().toISOString()
+    delete target.term_lock
   }
 
   /**
@@ -363,6 +446,15 @@ export function createAccounts(
       dropClassId(settings.value.asset_classification.offensive_assets, id)
       return
     }
+    const target = accounts.value[pool].find((item) => item.id === id)
+    if (target?.term_lock) {
+      if (isTermLocked(target.term_lock)) {
+        throw new Error(
+          `${target.name} 定期锁仓中，${target.term_lock.maturity_date} 到期前不能删除。可先提前支取。`,
+        )
+      }
+      throw new Error(`${target.name} 定期已到期，请先到期入账后再删除`)
+    }
     accounts.value[pool] = accounts.value[pool].filter((item) => item.id !== id)
     if (pool === 'hkd_pool') {
       dropClassId(settings.value.asset_classification.safe_assets, id)
@@ -378,8 +470,12 @@ export function createAccounts(
   return {
     updateStockPrices,
     updateStockHoldings,
+    addToStockHolding,
     upsertPoolAccount,
     updatePoolAmount,
+    setTermLock,
+    breakTermLock,
+    creditTermMaturity,
     transferPoolAmount,
     addFundLot,
     sellFundShares,

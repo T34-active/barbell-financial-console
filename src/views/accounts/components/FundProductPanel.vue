@@ -138,6 +138,14 @@ function lotPnlRate(lot: FundLot) {
   return div(lotPnl(lot), lot.amount)
 }
 
+/** 备注列只显示一行；申购时间和全文放在悬停里，避免长订单号撑高整表 */
+function lotRemark(lot: FundLot): string {
+  const parts: string[] = []
+  if (lot.apply_at) parts.push(formatBeijingDateTime(lot.apply_at))
+  if (lot.note) parts.push(lot.note)
+  return parts.join(' · ')
+}
+
 const buySettlement = computed(() =>
   resolveFundBuySettlement(parseBeijingDateTime(buyForm.value.applyAt)),
 )
@@ -690,7 +698,20 @@ async function removeProduct() {
 
       <div class="panel min-w-0 overflow-x-auto px-3 py-3 md:px-4">
         <p class="mb-2 text-xs font-medium text-ink-muted">加仓明细（FIFO 卖出从最早一笔扣）</p>
-        <table v-if="lots.length" class="w-full min-w-[720px] border-collapse text-left text-xs">
+        <table
+          v-if="lots.length"
+          class="w-full table-fixed border-collapse text-left text-xs"
+        >
+          <colgroup>
+            <col class="w-[12%]" />
+            <col class="w-[11%]" />
+            <col class="w-[10%]" />
+            <col class="w-[10%]" />
+            <col class="w-[11%]" />
+            <col class="w-[11%]" />
+            <col class="w-[20%]" />
+            <col />
+          </colgroup>
           <thead>
             <tr class="border-b border-surface-line text-ink-muted">
               <th class="px-2 py-2 font-medium">净值日</th>
@@ -733,7 +754,11 @@ async function removeProduct() {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="lot in lots" :key="lot.id" class="border-b border-surface-line/60">
+            <tr
+              v-for="lot in lots"
+              :key="lot.id"
+              class="border-b border-surface-line/60 whitespace-nowrap"
+            >
               <td class="px-2 py-2 font-mono">
                 {{ lot.confirm_date }}
                 <span
@@ -777,15 +802,15 @@ async function removeProduct() {
                   }}）
                 </template>
               </td>
-              <td class="px-2 py-2 text-ink-muted">
-                <span v-if="lot.apply_at">{{ formatBeijingDateTime(lot.apply_at) }}</span>
-                <span v-if="lot.apply_at && lot.note">·</span>
-                {{ lot.note || (lot.apply_at ? '' : '—') }}
+              <td class="overflow-hidden px-2 py-2 text-ink-muted">
+                <p class="truncate" :title="lotRemark(lot) || undefined">
+                  {{ lot.note || (lot.apply_at ? '申购' : '—') }}
+                </p>
               </td>
             </tr>
           </tbody>
           <tfoot>
-            <tr class="font-medium">
+            <tr class="font-medium whitespace-nowrap">
               <td class="px-2 py-2">合计</td>
               <td class="px-2 py-2">{{ formatMoney(summary.cost, currency) }}</td>
               <td class="px-2 py-2">—</td>

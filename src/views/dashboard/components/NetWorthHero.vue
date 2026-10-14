@@ -55,7 +55,8 @@ const yieldBreakdown = computed(() => store.estimatedAnnualIncomeBreakdown)
       <div class="mt-4 rounded-lg border border-surface-line bg-surface/70 px-3 py-3 md:px-4">
         <p class="text-xs font-medium">预估年化收益公式</p>
         <p class="mt-1 text-xs leading-5 text-ink-muted">
-          Σ 余额 × 年化利率 + Σ 市值 × 预估股息率（单利、按当前存量；黄金涨跌与美股资本利得不计）
+          Σ 余额 × 年化利率 + Σ 市值 × 预估股息率（单利、按当前存量；定期按实际天数 /
+          365；黄金涨跌与美股资本利得不计）
         </p>
         <p class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-muted">
           <span>人民币 {{ money(yieldBreakdown.cashYield) }}</span>
@@ -72,10 +73,11 @@ const yieldBreakdown = computed(() => store.estimatedAnnualIncomeBreakdown)
             <span class="min-w-0 truncate text-ink-muted">
               {{ line.name }}
               ·
-              {{ line.kind === 'dividend' ? '市值' : '余额' }}
+              {{ line.kind === 'dividend' ? '市值' : line.term_days ? '定期本金' : '余额' }}
               {{ money(line.principal) }}
               ×
               {{ percent(line.rate, 2) }}
+              <template v-if="line.term_days">× {{ line.term_days }}/365</template>
             </span>
             <span class="stat-num shrink-0 text-safe">{{ money(line.amount) }}</span>
           </li>
@@ -84,9 +86,8 @@ const yieldBreakdown = computed(() => store.estimatedAnnualIncomeBreakdown)
       </div>
 
       <p class="mt-4 text-xs text-ink-muted">
-        哑铃占比 · 安全 {{ percent(store.barbell.safeRatio) }} /
-        中性 {{ percent(store.barbell.neutralRatio) }} /
-        进取 {{ percent(store.barbell.riskRatio) }}
+        哑铃占比 · 安全 {{ percent(store.barbell.safeRatio) }} / 中性
+        {{ percent(store.barbell.neutralRatio) }} / 进取 {{ percent(store.barbell.riskRatio) }}
       </p>
     </div>
   </section>

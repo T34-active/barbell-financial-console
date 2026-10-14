@@ -10,12 +10,13 @@ import type {
   LoanRecord,
   LoanStatus,
   LoansState,
+  PoolAccount,
   SalaryState,
   YuanGouOutcome,
   YuanGouRecord,
   YuanGouState,
 } from '@/types/finance'
-import { createId } from '@/utils/salary-allocation'
+import { createId, normalizeFunFundCarryoverRule } from '@/utils/salary-allocation'
 import { div, mul, round, sub } from '@/utils/decimal'
 import { isNavFundAccount } from '@/utils/fund-nav'
 import { applyFundHoldingsFromLots } from '@/utils/fund-trade'
@@ -65,7 +66,13 @@ export function normalizeSettings(raw: AppSettings | undefined): AppSettings {
       neutral_assets: neutral,
       crypto_assets: cryptoAssets,
     },
-    rules: { ...seed.rules, ...raw.rules },
+    rules: {
+      ...seed.rules,
+      ...raw.rules,
+      carryover_rule: normalizeFunFundCarryoverRule(
+        raw.rules?.carryover_rule ?? seed.rules.carryover_rule,
+      ),
+    },
     fx_live: raw.fx_live ?? seed.fx_live ?? null,
   }
 }
@@ -73,6 +80,17 @@ export function normalizeSettings(raw: AppSettings | undefined): AppSettings {
 /** 已保存的池按用户数据保留；种子账户被删掉后刷新不再补回。缺字段才用种子。 */
 function savedPoolOrSeed<T>(saved: T[] | undefined, seed: T[]): T[] {
   return Array.isArray(saved) ? clonePlain(saved) : clonePlain(seed)
+}
+
+/** 旧锁仓把定期利率写在活期 yield_rate 上，拆到 term_lock.rate 并把活期清零 */
+function splitLegacyTermRate(accounts: PoolAccount[]) {
+  for (const account of accounts) {
+    const lock = account.term_lock
+    if (!lock || (lock.rate != null && lock.rate > 0)) continue
+    if (!(account.yield_rate != null && account.yield_rate > 0)) continue
+    lock.rate = account.yield_rate
+    account.yield_rate = 0
+  }
 }
 
 export function normalizeAccounts(raw: AccountsState | undefined): AccountsState {
@@ -88,9 +106,42 @@ export function normalizeAccounts(raw: AccountsState | undefined): AccountsState
   const rmb = clonePlain(raw.rmb_pool ?? seed.rmb_pool)
   const yulibao = rmb.find((item) => item.id === 'yulibao')
   if (yulibao) {
+    yulibao.note = '中邮理财惠农·鸿运日开12号理财产品'
     // 旧种子 1.8% 已脱离当前日开理财水位，迁移到 1.5% 参考年化
     if (yulibao.yield_rate == null || Math.abs(yulibao.yield_rate - 0.018) < 1e-9) {
       yulibao.yield_rate = 0.015
+    }
+  }
+  const gold = rmb.find((item) => item.id === 'gold_etf')
+  if (gold) {
+    gold.name = '博时黄金ETF联接C'
+    gold.note = '基金代码 002611 · 经支付宝持有'
+    gold.fund_code = gold.fund_code || '002611'
+    if (!gold.fund_lots?.length) {
+      gold.fund_lots = [
+        {
+          id: 'lot_20260713',
+          confirm_date: '2026-07-13',
+          amount: 0.6,
+          confirm_nav: 2.785,
+          shares: 0.2154,
+          note: '活动',
+        },
+        {
+          id: 'lot_20260717',
+          confirm_date: '2026-07-17',
+          amount: 100,
+          confirm_nav: 2.7402,
+          shares: 36.4937,
+        },
+        {
+          id: 'lot_20260728',
+          confirm_date: '2026-07-28',
+          amount: 100,
+          confirm_nav: 2.773,
+          shares: 36.0613,
+        },
+      ]
     }
   }
   for (const fund of rmb) {
@@ -110,6 +161,10 @@ export function normalizeAccounts(raw: AccountsState | undefined): AccountsState
       }
     }
   }
+
+  splitLegacyTermRate(hkd)
+  splitLegacyTermRate(rmb)
+  splitLegacyTermRate(crypto)
 
   return {
     rmb_pool: rmb,
@@ -131,21 +186,6 @@ function alignSeededClassIds(list: string[], seededIds: Set<string>, aliveIds: S
   return next
 }
 
-export function alignPoolClassification(settings: AppSettings, accounts: AccountsState) {
-  const hkdIds = new Set(accounts.hkd_pool.map((item) => item.id))
-  const cryptoIds = new Set(accounts.crypto_pool.map((item) => item.id))
-  settings.asset_classification.safe_assets = alignSeededClassIds(
-    settings.asset_classification.safe_assets,
-    SEEDED_HKD_IDS,
-    hkdIds,
-  )
-  settings.asset_classification.crypto_assets = alignSeededClassIds(
-    settings.asset_classification.crypto_assets ?? [],
-    SEEDED_CRYPTO_IDS,
-    cryptoIds,
-  )
-}
-
 /** 净值基金只进中性端；黄金账户已删除时不再把 gold_etf 补回去 */
 export function alignNeutralFundClassification(settings: AppSettings, accounts: AccountsState) {
   const fundIds = accounts.rmb_pool.filter((item) => isNavFundAccount(item)).map((item) => item.id)
@@ -159,6 +199,21 @@ export function alignNeutralFundClassification(settings: AppSettings, accounts: 
   settings.asset_classification.neutral_assets = neutral
   settings.asset_classification.safe_assets = settings.asset_classification.safe_assets.filter(
     (id) => !fundSet.has(id),
+  )
+}
+
+export function alignPoolClassification(settings: AppSettings, accounts: AccountsState) {
+  const hkdIds = new Set(accounts.hkd_pool.map((item) => item.id))
+  const cryptoIds = new Set(accounts.crypto_pool.map((item) => item.id))
+  settings.asset_classification.safe_assets = alignSeededClassIds(
+    settings.asset_classification.safe_assets,
+    SEEDED_HKD_IDS,
+    hkdIds,
+  )
+  settings.asset_classification.crypto_assets = alignSeededClassIds(
+    settings.asset_classification.crypto_assets ?? [],
+    SEEDED_CRYPTO_IDS,
+    cryptoIds,
   )
 }
 
@@ -370,7 +425,15 @@ export function normalizeSalary(raw: SalaryState | undefined, yulibaoAmount: num
     })),
     extra_income_history: raw.extra_income_history ?? [],
     remit_history: raw.remit_history ?? [],
-    carryover_history: raw.carryover_history ?? [],
+    carryover_history: (raw.carryover_history ?? []).map((item) => ({
+      ...item,
+      rule: normalizeFunFundCarryoverRule(item.rule),
+      to_safety: item.to_safety ?? 0,
+      to_seed: item.to_seed ?? 0,
+      to_parents: item.to_parents ?? 0,
+      to_travel: item.to_travel ?? 0,
+      to_fun: item.to_fun ?? 0,
+    })),
     fun_fund_charge_history: (raw.fun_fund_charge_history ?? []).map((item) => {
       const due = String(item.reimburse_due || '')
       const note = String(item.reimburse_note || '').trim()

@@ -5,7 +5,11 @@ import { useFinanceStore } from '@/stores/finance'
 import { useTheme, type ThemeMode } from '@/composables/useTheme'
 import { useQuoteColor, type QuoteColorScheme } from '@/composables/useQuoteColor'
 import type { BaseCurrency, FunFundCarryoverRule, SalaryRatios } from '@/types/finance'
-import { ratiosAreValid, sumRatios } from '@/utils/salary-allocation'
+import {
+  FUN_FUND_CARRYOVER_OPTIONS,
+  ratiosAreValid,
+  sumRatios,
+} from '@/utils/salary-allocation'
 import { CURSOR_PRO_CHARGE_ID } from '@/utils/fun-fund-charge'
 import { formatBeijingDateTime } from '@/utils/datetime'
 import { div, mul, round } from '@/utils/decimal'
@@ -540,11 +544,25 @@ async function handleImportFile(event: Event) {
         </div>
 
         <div>
-          <label class="mb-2 block text-sm text-ink-muted">快乐基金月末结转</label>
-          <el-radio-group v-model="carryoverRule">
-            <el-radio value="split_50_50">50/50 安全垫 + 进攻</el-radio>
-            <el-radio value="surplus_happy_fund_to_offensive">全额进攻（奖励节俭）</el-radio>
-          </el-radio-group>
+          <label class="mb-2 block text-sm text-ink-muted">快乐基金月末结转默认去向</label>
+          <el-select v-model="carryoverRule" placeholder="选择结转去向" class="w-full! max-w-md">
+            <el-option
+              v-for="item in FUN_FUND_CARRYOVER_OPTIONS"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            >
+              <div class="flex flex-col py-0.5">
+                <span>{{ item.label }}</span>
+                <span class="text-xs text-ink-muted">{{ item.hint }}</span>
+              </div>
+            </el-option>
+          </el-select>
+          <p class="mt-1 text-xs text-ink-muted">
+            {{
+              FUN_FUND_CARRYOVER_OPTIONS.find((item) => item.value === carryoverRule)?.hint
+            }}
+          </p>
         </div>
 
         <div class="rounded-lg bg-surface px-3 py-3">

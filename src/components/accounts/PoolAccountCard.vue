@@ -1,8 +1,20 @@
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { PoolAccount } from '@/types/finance'
 import { formatMoney, formatPercent } from '@/utils/currency'
-import { formatBeijingDateTime } from '@/utils/datetime'
+import { formatBeijingDateTime, todayBeijingDate } from '@/utils/datetime'
+import {
+  demandBalance,
+  isTermLocked,
+  lockedPrincipal,
+  maturityInterest,
+  TERM_SHORTCUTS,
+  termDays,
+  termDaysLeft,
+  termLengthLabel,
+  termMaturityFromShortcut,
+  type TermShortcutId,
+} from '@/utils/term-lock'
 import { add, div, mul, round, sub } from '@/utils/decimal'
 import { HTX_HOURS_PER_YEAR, htxHourlyRate } from '@/utils/htx-rebalance'
 import { useFinanceFormat } from '@/composables/useFinanceFormat'
@@ -24,6 +36,8 @@ const props = withDefaults(
     renamable?: boolean
     /** 可转出的其他账户（港币池内） */
     transferTargets?: PoolAccount[]
+    /** 港币池：可设定期锁仓 */
+    termLockable?: boolean
   }>(),
   {
     editable: false,
@@ -31,6 +45,7 @@ const props = withDefaults(
     removable: false,
     renamable: false,
     transferTargets: () => [],
+    termLockable: false,
   },
 )
 
@@ -40,6 +55,9 @@ const emit = defineEmits<{
   remove: []
   rename: []
   transfer: [payload: { toId: string; amount: number; received?: number }]
+  setTermLock: [payload: { start_date: string; maturity_date: string; rate: number }]
+  breakTermLock: []
+  creditTermMaturity: [interest: number]
 }>()
 
 const { moneyInBase } = useFinanceFormat()
@@ -62,6 +80,18 @@ const typeLabel: Record<PoolAccount['type'], string> = {
   crypto_earn: '加密赚币',
 }
 
+/** in/out=存入或取出；transfer=转到池内其他账户；total=直接改总额；pnl=当日收益 */
+const amountTab = ref<'in' | 'out' | 'transfer' | 'total' | 'pnl'>(
+  props.account.type === 'gold' ? 'pnl' : 'in',
+)
+const amountMode = computed(() => {
+  if (amountTab.value === 'total') return 'total' as const
+  if (amountTab.value === 'pnl') return 'pnl' as const
+  if (amountTab.value === 'transfer') return 'transfer' as const
+  return 'delta' as const
+})
+const deltaSign = computed<1 | -1>(() => (amountTab.value === 'out' ? -1 : 1))
+const draftDelta = ref(0)
 const draftAmount = ref(props.account.amount)
 const draftDailyPnl = ref(0)
 const draftYieldPct = ref(round(mul(props.account.yield_rate ?? 0, 100), 2))
@@ -73,7 +103,15 @@ watch(
   () => props.account.amount,
   (v) => {
     draftAmount.value = v
+    draftDelta.value = 0
     draftDailyPnl.value = 0
+  },
+)
+
+watch(
+  () => props.account.yield_rate,
+  (v) => {
+    draftYieldPct.value = round(mul(v ?? 0, 100), 2)
   },
 )
 
@@ -87,22 +125,6 @@ watch(
   { immediate: true },
 )
 
-watch(
-  () => props.account.yield_rate,
-  (v) => {
-    draftYieldPct.value = round(mul(v ?? 0, 100), 2)
-  },
-)
-
-const previewAmount = computed(() => {
-  if (isGold.value) return round(add(props.account.amount, draftDailyPnl.value), 2)
-  return round(draftAmount.value, 2)
-})
-
-const balanceDelta = computed(() => round(sub(previewAmount.value, props.account.amount), 2))
-
-const dirtyAmount = computed(() => Math.abs(balanceDelta.value) > 1e-9)
-
 const transferTarget = computed(
   () => props.transferTargets.find((item) => item.id === transferToId.value) ?? null,
 )
@@ -110,10 +132,176 @@ const transferCrossCurrency = computed(
   () => !!transferTarget.value && transferTarget.value.currency !== props.account.currency,
 )
 
+const signedDelta = computed(() => round(mul(draftDelta.value, deltaSign.value), 2))
+
+const previewAmount = computed(() => {
+  if (amountMode.value === 'total') {
+    return round(draftAmount.value, 2)
+  }
+  if (amountMode.value === 'pnl') {
+    return round(add(props.account.amount, draftDailyPnl.value), 2)
+  }
+  return round(add(props.account.amount, signedDelta.value), 2)
+})
+
+const dirtyAmount = computed(() => {
+  if (amountMode.value === 'total') {
+    return Math.abs(sub(draftAmount.value, props.account.amount)) > 1e-9
+  }
+  if (amountMode.value === 'pnl') {
+    return Math.abs(draftDailyPnl.value) > 1e-9
+  }
+  return Math.abs(signedDelta.value) > 1e-9
+})
+
 const dirtyYield = computed(() => {
   const current = round(mul(props.account.yield_rate ?? 0, 100), 2)
   return Math.abs(sub(draftYieldPct.value, current)) > 1e-9
 })
+
+const deltaLabel = computed(() => {
+  const d = signedDelta.value
+  if (Math.abs(d) < 1e-9) return '本次无变动'
+  const sign = d > 0 ? '+' : ''
+  return `本次 ${sign}${formatMoney(d, props.account.currency)}`
+})
+
+const termLock = computed(() => props.account.term_lock)
+const termActive = computed(() => isTermLocked(termLock.value, now.value))
+const termDayCount = computed(() =>
+  termLock.value ? termDays(termLock.value.start_date, termLock.value.maturity_date) : 0,
+)
+const termDaysRemaining = computed(() =>
+  termLock.value ? termDaysLeft(termLock.value, now.value) : 0,
+)
+const lockedPrincipalAmount = computed(() => lockedPrincipal(props.account.amount, termLock.value))
+const demandAmount = computed(() => demandBalance(props.account.amount, termLock.value, now.value))
+const termInterest = computed(() =>
+  termLock.value?.rate
+    ? maturityInterest(
+        lockedPrincipalAmount.value,
+        termLock.value.rate,
+        termLock.value.start_date,
+        termLock.value.maturity_date,
+      )
+    : 0,
+)
+const draftInterest = ref(0)
+watch(
+  termInterest,
+  (value) => {
+    draftInterest.value = value
+  },
+  { immediate: true },
+)
+watch(termActive, (locked) => {
+  if (locked && (amountTab.value === 'total' || amountTab.value === 'pnl')) amountTab.value = 'in'
+})
+watch(amountTab, (tab) => {
+  if (tab === 'total') draftAmount.value = props.account.amount
+  else if (tab === 'pnl') draftDailyPnl.value = 0
+  else if (tab === 'in' || tab === 'out') draftDelta.value = 0
+})
+
+const termSpanLabel = computed(() =>
+  termLock.value
+    ? termLengthLabel(termLock.value.start_date, termLock.value.maturity_date)
+    : '定期',
+)
+
+const termDialogVisible = ref(false)
+const termStart = ref('')
+const termMaturity = ref('')
+const termRatePct = ref(0)
+const termShortcut = ref<TermShortcutId | ''>('')
+
+const termDraftInterest = computed(() => {
+  if (!termStart.value || !termMaturity.value || !(termRatePct.value > 0)) return null
+  return maturityInterest(
+    props.account.amount,
+    div(termRatePct.value, 100),
+    termStart.value,
+    termMaturity.value,
+  )
+})
+
+function openTermDialog() {
+  termShortcut.value = ''
+  termStart.value = todayBeijingDate()
+  termMaturity.value = ''
+  termRatePct.value = 0
+  termDialogVisible.value = true
+}
+
+function applyTermShortcut(id: TermShortcutId) {
+  if (!termStart.value) termStart.value = todayBeijingDate()
+  termShortcut.value = id
+  termMaturity.value = termMaturityFromShortcut(termStart.value, id)
+}
+
+watch(termStart, (start) => {
+  if (!termShortcut.value || !start) return
+  termMaturity.value = termMaturityFromShortcut(start, termShortcut.value)
+})
+
+function onTermMaturityChange() {
+  if (!termShortcut.value || !termStart.value) return
+  if (termMaturityFromShortcut(termStart.value, termShortcut.value) !== termMaturity.value) {
+    termShortcut.value = ''
+  }
+}
+
+function submitTermLock() {
+  if (!termStart.value || !termMaturity.value) {
+    ElMessage.warning('请填写起息日和到期日')
+    return
+  }
+  if (!(termRatePct.value > 0) || termRatePct.value > 100) {
+    ElMessage.warning('请填写大于 0 的定期年化')
+    return
+  }
+  try {
+    emit('setTermLock', {
+      start_date: termStart.value,
+      maturity_date: termMaturity.value,
+      rate: div(round(termRatePct.value, 2), 100),
+    })
+    termDialogVisible.value = false
+  } catch {
+    /* 父组件已提示失败原因 */
+  }
+}
+
+async function confirmBreak() {
+  try {
+    await ElMessageBox.confirm(
+      `提前支取将解除锁仓，不计定期利息，余额保持 ${formatMoney(props.account.amount, props.account.currency)}。`,
+      '提前支取',
+      { confirmButtonText: '解除锁仓', cancelButtonText: '取消', type: 'warning' },
+    )
+    emit('breakTermLock')
+  } catch {
+    /* 取消，或父组件已提示失败原因 */
+  }
+}
+
+async function confirmCredit() {
+  const gain = round(draftInterest.value, 2)
+  if (!(gain >= 0)) {
+    ElMessage.warning('入账利息不能为负')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将 ${formatMoney(gain, props.account.currency)} 利息计入余额，并解除锁仓？`,
+      '到期入账',
+      { confirmButtonText: '确认入账', cancelButtonText: '取消', type: 'warning' },
+    )
+    emit('creditTermMaturity', gain)
+  } catch {
+    /* 取消，或父组件已提示失败原因 */
+  }
+}
 
 function saveAmount() {
   const next = previewAmount.value
@@ -121,14 +309,39 @@ function saveAmount() {
     ElMessage.warning('余额不能为负')
     return
   }
-  emit('saveAmount', next)
-  const delta = balanceDelta.value
+  if (termActive.value && amountMode.value === 'total') {
+    ElMessage.warning('定期锁仓中不能改总额')
+    return
+  }
+  if (termActive.value && next + 1e-9 < lockedPrincipalAmount.value) {
+    ElMessage.warning(
+      `活期只有 ${formatMoney(demandAmount.value, props.account.currency)}，定期本金不能取出`,
+    )
+    return
+  }
+  try {
+    emit('saveAmount', next)
+  } catch (error) {
+    if (error instanceof Error && error.message) ElMessage.error(error.message)
+    return
+  }
+  const delta = round(sub(next, props.account.amount), 2)
   const deltaText =
     Math.abs(delta) < 1e-9
       ? '无变动'
       : `${delta > 0 ? '+' : ''}${formatMoney(delta, props.account.currency)}`
   ElMessage.success(`${props.account.name} 已更新（${deltaText}）`)
+  draftDelta.value = 0
   draftDailyPnl.value = 0
+}
+
+function saveYield() {
+  if (draftYieldPct.value < 0 || draftYieldPct.value > 100) {
+    ElMessage.warning('年化收益率须在 0%–100% 之间')
+    return
+  }
+  emit('saveYield', div(round(draftYieldPct.value, 2), 100))
+  ElMessage.success(`${props.account.name} 年化收益率已更新`)
 }
 
 function submitTransfer() {
@@ -140,6 +353,12 @@ function submitTransfer() {
   const amount = round(transferAmount.value, 2)
   if (!(amount > 0)) {
     ElMessage.warning('转出金额须大于 0')
+    return
+  }
+  if (termActive.value && amount > demandAmount.value + 1e-9) {
+    ElMessage.warning(
+      `活期只有 ${formatMoney(demandAmount.value, props.account.currency)}，定期本金不能转出`,
+    )
     return
   }
   if (props.account.amount + 1e-9 < amount) {
@@ -159,15 +378,6 @@ function submitTransfer() {
     /* 父组件已提示失败原因 */
   }
 }
-
-function saveYield() {
-  if (draftYieldPct.value < 0 || draftYieldPct.value > 100) {
-    ElMessage.warning('年化收益率须在 0%–100% 之间')
-    return
-  }
-  emit('saveYield', div(round(draftYieldPct.value, 2), 100))
-  ElMessage.success(`${props.account.name} 年化收益率已更新`)
-}
 </script>
 
 <template>
@@ -184,7 +394,7 @@ function saveYield() {
         <span
           class="rounded-md px-2 py-1 text-xs"
           :class="
-            account.type === 'gold' || account.type === 'fund' || account.type === 'crypto_earn'
+            account.type === 'gold' || account.type === 'crypto_earn'
               ? 'bg-accent-soft text-accent'
               : 'bg-surface-tint text-ink-muted'
           "
@@ -223,7 +433,55 @@ function saveYield() {
         </p>
       </div>
 
-      <div v-if="isGold" class="space-y-2">
+      <div
+        v-if="termLock"
+        class="rounded-lg border border-surface-line bg-surface px-3 py-2 text-xs"
+      >
+        <p class="font-medium">
+          <template v-if="termActive">
+            {{ termSpanLabel }}还剩 {{ termDaysRemaining }} 天到期
+          </template>
+          <template v-else>{{ termSpanLabel }}已于 {{ termLock.maturity_date }} 到期</template>
+        </p>
+        <p class="mt-1 text-ink-muted">
+          定期 {{ formatMoney(lockedPrincipalAmount, account.currency) }} 锁至
+          {{ termLock.maturity_date }} · 活期
+          {{ formatMoney(demandAmount, account.currency) }} 可存入 / 取出
+        </p>
+        <p class="mt-1 text-safe">
+          <FormulaTooltip>
+            到期利息 {{ formatMoney(termInterest, account.currency) }}
+            <template #content>
+              <p>定期本金 × 年化 × 实际天数 / 365</p>
+              <p class="font-mono">
+                {{ formatMoney(lockedPrincipalAmount, account.currency) }} ×
+                {{ formatPercent(termLock.rate ?? 0, 2) }} × {{ termDayCount }} / 365 =
+                {{ formatMoney(termInterest, account.currency) }}
+              </p>
+            </template>
+          </FormulaTooltip>
+        </p>
+        <div v-if="termActive" class="mt-2">
+          <el-button size="small" type="danger" plain @click="confirmBreak">提前支取</el-button>
+        </div>
+        <div v-else class="mt-2 space-y-2">
+          <label class="block text-xs text-ink-muted">入账利息（{{ account.currency }}）</label>
+          <div class="flex flex-wrap items-center gap-2">
+            <AmountInput v-model="draftInterest" :min="0" class="w-44!" />
+            <el-button type="primary" size="small" @click="confirmCredit">到期入账</el-button>
+          </div>
+        </div>
+      </div>
+
+      <el-tabs v-model="amountTab" class="amount-tabs">
+        <el-tab-pane v-if="isGold" label="当日收益" name="pnl" />
+        <el-tab-pane label="存入" name="in" />
+        <el-tab-pane label="取出" name="out" />
+        <el-tab-pane v-if="transferTargets.length" label="转出" name="transfer" />
+        <el-tab-pane v-if="!termActive" label="改总额" name="total" />
+      </el-tabs>
+
+      <div v-if="amountMode === 'pnl'" class="space-y-2">
         <label class="block text-xs text-ink-muted">
           当日收益（{{ account.currency }}，亏了填负数）
         </label>
@@ -241,23 +499,39 @@ function saveYield() {
         </p>
       </div>
 
-      <div v-else class="space-y-2">
-        <label class="block text-xs text-ink-muted">账面余额（{{ account.currency }}）</label>
+      <div v-else-if="amountMode === 'delta'" class="space-y-2">
+        <label class="block text-xs text-ink-muted">
+          {{ termActive ? '活期金额' : '本次金额' }}（{{ account.currency }}）
+        </label>
         <div class="flex flex-wrap items-center gap-2">
-          <AmountInput v-model="draftAmount" :min="0" class="w-44!" />
+          <AmountInput v-model="draftDelta" :min="0" class="w-44!" />
           <el-button type="primary" size="small" :disabled="!dirtyAmount" @click="saveAmount">
-            保存余额
+            {{ amountTab === 'out' ? '确认取出' : '确认存入' }}
           </el-button>
         </div>
-        <p class="text-sm" :class="balanceDelta >= 0 ? 'text-safe' : 'text-alert'">
-          相对当前
-          {{ balanceDelta >= 0 ? '+' : '' }}{{ formatMoney(balanceDelta, account.currency) }}
+        <p class="text-sm" :class="signedDelta >= 0 ? 'text-safe' : 'text-alert'">
+          {{ deltaLabel }}
+          <span class="text-ink-muted">
+            → {{ termActive ? '活期' : '余额' }}
+            {{
+              formatMoney(
+                termActive ? round(add(demandAmount, signedDelta), 2) : previewAmount,
+                account.currency,
+              )
+            }}
+          </span>
+        </p>
+        <p v-if="termActive" class="text-xs text-ink-muted">
+          只动活期，定期本金 {{ formatMoney(lockedPrincipalAmount, account.currency) }} 不动。
         </p>
       </div>
 
-      <div v-if="transferTargets.length" class="space-y-2 border-t border-surface-line pt-3">
+      <div v-else-if="amountMode === 'transfer'" class="space-y-2">
         <p class="text-xs text-ink-muted">
-          转到池内其他账户。同币种两边一起改；跨币种填银行实际到账。
+          <template v-if="termActive">
+            只能转出活期 {{ formatMoney(demandAmount, account.currency) }}，定期本金不动。
+          </template>
+          <template v-else>转到池内其他账户。同币种两边一起改；跨币种填银行实际到账。</template>
         </p>
         <el-select v-model="transferToId" class="w-full!" placeholder="转入账户">
           <el-option
@@ -276,6 +550,24 @@ function saveYield() {
           <span class="text-xs text-ink-muted">到账 {{ transferTarget?.currency }}</span>
         </div>
         <el-button type="primary" size="small" plain @click="submitTransfer">确认转出</el-button>
+      </div>
+
+      <div v-else class="space-y-2">
+        <label class="block text-xs text-ink-muted">新总额（{{ account.currency }}）</label>
+        <div class="flex flex-wrap items-center gap-2">
+          <AmountInput v-model="draftAmount" :min="0" class="w-44!" />
+          <el-button type="primary" size="small" :disabled="!dirtyAmount" @click="saveAmount">
+            保存总额
+          </el-button>
+        </div>
+        <p
+          class="text-sm"
+          :class="sub(previewAmount, account.amount) >= 0 ? 'text-safe' : 'text-alert'"
+        >
+          相对当前
+          {{ sub(previewAmount, account.amount) >= 0 ? '+' : ''
+          }}{{ formatMoney(sub(previewAmount, account.amount), account.currency) }}
+        </p>
       </div>
 
       <p v-if="account.amount_updated_at" class="text-[11px] text-ink-muted">
@@ -300,7 +592,13 @@ function saveYield() {
     </p>
 
     <div v-if="editableYield" class="space-y-2 border-t border-surface-line pt-3">
-      <label class="block text-xs text-ink-muted">年化收益率（% · 业绩比较基准参考，非承诺）</label>
+      <label class="block text-xs text-ink-muted">
+        {{
+          termLockable
+            ? '活期年化（% · 只用于活期余额，与定期利率分开）'
+            : '年化收益率（% · 业绩比较基准参考，非承诺）'
+        }}
+      </label>
       <div class="flex flex-wrap items-center gap-2">
         <el-input-number
           v-model="draftYieldPct"
@@ -316,6 +614,10 @@ function saveYield() {
         </el-button>
       </div>
       <p class="text-xs text-safe">当前 {{ formatPercent(account.yield_rate ?? 0, 2) }}</p>
+    </div>
+
+    <div v-if="termLockable && !termLock" class="border-t border-surface-line pt-3">
+      <el-button size="small" plain @click="openTermDialog">设为定期</el-button>
     </div>
 
     <div
@@ -401,4 +703,78 @@ function saveYield() {
     :total="htxYield.daily"
     :waiting-first-payout="htxYield.waitingFirstPayout"
   />
+  <el-dialog
+    v-model="termDialogVisible"
+    title="设为定期"
+    width="92%"
+    class="max-w-md"
+    append-to-body
+  >
+    <div class="space-y-4">
+      <p class="text-xs text-ink-muted">
+        定期利率单独填写，不改上面的活期年化。到期前不能改总额，也不能动定期本金。
+      </p>
+      <div>
+        <p class="mb-1 text-xs text-ink-muted">期限</p>
+        <div class="flex flex-wrap gap-2">
+          <el-button
+            v-for="shortcut in TERM_SHORTCUTS"
+            :key="shortcut.id"
+            size="small"
+            :type="termShortcut === shortcut.id ? 'primary' : 'default'"
+            plain
+            @click="applyTermShortcut(shortcut.id)"
+          >
+            {{ shortcut.label }}
+          </el-button>
+        </div>
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">起息日</label>
+        <el-date-picker v-model="termStart" type="date" value-format="YYYY-MM-DD" class="w-full!" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">到期日</label>
+        <el-date-picker
+          v-model="termMaturity"
+          type="date"
+          value-format="YYYY-MM-DD"
+          class="w-full!"
+          @change="onTermMaturityChange"
+        />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-ink-muted">定期年化（%）</label>
+        <el-input-number
+          v-model="termRatePct"
+          :min="0"
+          :max="100"
+          :step="0.01"
+          :precision="2"
+          controls-position="right"
+          class="w-full!"
+        />
+      </div>
+      <p v-if="termDraftInterest != null" class="text-sm text-safe">
+        到期利息约
+        {{ formatMoney(termDraftInterest, account.currency) }}
+        （本金 {{ formatMoney(account.amount, account.currency) }} ×
+        {{ formatPercent(div(termRatePct, 100), 2) }} × {{ termDays(termStart, termMaturity) }} /
+        365）
+      </p>
+    </div>
+    <template #footer>
+      <el-button @click="termDialogVisible = false">取消</el-button>
+      <el-button type="primary" @click="submitTermLock">锁仓</el-button>
+    </template>
+  </el-dialog>
 </template>
+
+<style scoped>
+.amount-tabs :deep(.el-tabs__header) {
+  margin-bottom: 0;
+}
+.amount-tabs :deep(.el-tabs__content) {
+  display: none;
+}
+</style>

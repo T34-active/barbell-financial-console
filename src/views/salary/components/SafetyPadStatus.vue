@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
 import { useFinanceStore } from '@/stores/finance'
-import { formatMoney } from '@/utils/currency'
+import { useFinanceFormat } from '@/composables/useFinanceFormat'
 import { formatBeijingDateTime } from '@/utils/datetime'
 import { add, mul, round } from '@/utils/decimal'
 import { resolveFearGreedLabel } from '@/utils/fear-greed'
 import FearGreedMeter from '@/components/summary/FearGreedMeter.vue'
 
 const store = useFinanceStore()
+const { moneyInBase } = useFinanceFormat()
 const peRefreshing = ref(false)
+const fearGreedRefreshing = ref(false)
 
-const progressPercent = computed(() =>
-  round(mul(store.safetyPadProgress.ratio, 100), 0),
-)
+const progressPercent = computed(() => round(mul(store.safetyPadProgress.ratio, 100), 0))
 
 const peCurrent = computed(() => store.settings.rules.nasdaq_pe_current)
 const peThreshold = computed(() => store.settings.rules.nasdaq_pe_threshold)
@@ -25,20 +25,13 @@ const peStatusText = computed(() => {
 })
 const avgPivot = computed(() => store.settings.rules.avg_pivot ?? 25)
 const fearGreedIndex = computed(() => store.settings.rules.fear_greed_index ?? 50)
+const fearGreedUpdatedAt = computed(() => store.settings.rules.fear_greed_updated_at)
 const fearGreedLabel = computed(() =>
-  resolveFearGreedLabel(
-    fearGreedIndex.value,
-    store.settings.rules.fear_greed_rating,
-  ),
+  resolveFearGreedLabel(fearGreedIndex.value, store.settings.rules.fear_greed_rating),
 )
 
 const yulibaoTotal = computed(() =>
-  add(
-    store.emergencyReserve,
-    store.usSeedParking,
-    store.cashObservation,
-    store.travelFundPocket,
-  ),
+  add(store.emergencyReserve, store.usSeedParking, store.cashObservation, store.travelFundPocket),
 )
 
 const buckets = computed(() => {
@@ -64,6 +57,19 @@ const buckets = computed(() => {
   return items
 })
 
+async function handleRefreshFearGreed() {
+  fearGreedRefreshing.value = true
+  try {
+    const quote = await store.refreshFearGreedIndex()
+    ElMessage.success(`恐贪指数已更新为 ${quote.score}（${quote.rating_zh} · CNN）`)
+  } catch (error) {
+    if (error instanceof Error) ElMessage.error(error.message)
+    else ElMessage.error('恐贪指数拉取失败')
+  } finally {
+    fearGreedRefreshing.value = false
+  }
+}
+
 async function handleRefreshPe() {
   peRefreshing.value = true
   try {
@@ -86,21 +92,17 @@ async function handleRefreshPe() {
           <div>
             <p class="text-xs text-ink-muted">应急备用金</p>
             <p class="stat-num mt-1 text-2xl font-semibold md:text-3xl">
-              {{ formatMoney(store.safetyPadProgress.current, 'CNY') }}
+              {{ moneyInBase(store.safetyPadProgress.current, 'CNY') }}
             </p>
             <p class="mt-1 text-xs text-ink-muted">
               目标
-              {{ formatMoney(store.safetyPadProgress.target, 'CNY', { digits: 0 }) }}
+              {{ moneyInBase(store.safetyPadProgress.target, 'CNY') }}
               · {{ store.allocationModeLabel }}
             </p>
           </div>
           <span
             class="rounded-full px-2.5 py-1 text-xs font-medium"
-            :class="
-              store.isSafetyPadFull
-                ? 'bg-safe-soft text-safe'
-                : 'bg-risk-soft text-risk'
-            "
+            :class="store.isSafetyPadFull ? 'bg-safe-soft text-safe' : 'bg-risk-soft text-risk'"
           >
             {{ store.isSafetyPadFull ? '已满 · 转进攻' : '未满 · 先补仓' }}
           </span>
@@ -122,23 +124,17 @@ async function handleRefreshPe() {
         <p class="mt-2 text-xs text-ink-muted">
           <template v-if="!store.isSafetyPadFull">
             还差
-            {{ formatMoney(store.safetyPadProgress.gap, 'CNY') }}
+            {{ moneyInBase(store.safetyPadProgress.gap, 'CNY') }}
             ，下月工资优先回补
           </template>
-          <template v-else>
-            已满。本月安全垫份额并入进攻端；跌破目标后自动回溯补仓
-          </template>
+          <template v-else>已满。本月安全垫份额并入进攻端；跌破目标后自动回溯补仓</template>
         </p>
 
         <div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <div
-            v-for="item in buckets"
-            :key="item.key"
-            class="rounded-lg bg-surface px-3 py-2.5"
-          >
+          <div v-for="item in buckets" :key="item.key" class="rounded-lg bg-surface px-3 py-2.5">
             <p class="text-[11px] text-ink-muted">{{ item.label }}</p>
             <p class="stat-num mt-0.5 text-sm font-semibold">
-              {{ formatMoney(item.value, 'CNY') }}
+              {{ moneyInBase(item.value, 'CNY') }}
             </p>
           </div>
         </div>
@@ -151,12 +147,18 @@ async function handleRefreshPe() {
         class="flex min-w-0 flex-col justify-between overflow-hidden border-t border-surface-line px-5 py-5 lg:border-l lg:border-t-0"
       >
         <div class="min-w-0">
-          <p class="text-xs text-ink-muted">恐贪指数</p>
-          <FearGreedMeter
-            class="mt-3"
-            :score="fearGreedIndex"
-            :label="fearGreedLabel"
-          />
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <p class="text-xs text-ink-muted">恐贪指数</p>
+              <p v-if="fearGreedUpdatedAt" class="mt-0.5 text-[11px] text-ink-muted">
+                {{ formatBeijingDateTime(fearGreedUpdatedAt) }}
+              </p>
+            </div>
+            <el-button size="small" :loading="fearGreedRefreshing" @click="handleRefreshFearGreed">
+              拉取
+            </el-button>
+          </div>
+          <FearGreedMeter class="mt-3" :score="fearGreedIndex" :label="fearGreedLabel" />
         </div>
 
         <div class="mt-4 flex items-end justify-between gap-3">
@@ -166,23 +168,17 @@ async function handleRefreshPe() {
               <span :class="peEnabled && peOver ? 'text-risk' : 'text-ink'">
                 {{ peCurrent }}
               </span>
-              <span class="text-sm font-normal text-ink-muted">
-                / {{ peThreshold }}
-              </span>
+              <span class="text-sm font-normal text-ink-muted">/ {{ peThreshold }}</span>
             </p>
             <p
               class="mt-0.5 text-[11px]"
               :class="peEnabled && peOver ? 'text-risk' : 'text-ink-muted'"
             >
               {{ peStatusText }} · 中枢 {{ avgPivot }}
-              <template v-if="peUpdatedAt">
-                · {{ formatBeijingDateTime(peUpdatedAt) }}
-              </template>
+              <template v-if="peUpdatedAt">· {{ formatBeijingDateTime(peUpdatedAt) }}</template>
             </p>
           </div>
-          <el-button size="small" :loading="peRefreshing" @click="handleRefreshPe">
-            拉取
-          </el-button>
+          <el-button size="small" :loading="peRefreshing" @click="handleRefreshPe">拉取</el-button>
         </div>
       </div>
     </div>
