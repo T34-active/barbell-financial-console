@@ -69,6 +69,9 @@ const apiProxies: Record<string, ProxyOptions> = {
 
 const elementPlusResolver = ElementPlusResolver({ importStyle: 'css' })
 
+/** 顶栏 GitHub 图标指向本仓库（公开演示仓） */
+const githubRepoUrl = 'https://github.com/T34-active/barbell-financial-console'
+
 /** 公开演示站路径，对应 https://<owner>.github.io/barbell-financial-console/ */
 const githubPagesBase = '/barbell-financial-console/'
 
@@ -86,6 +89,9 @@ function githubPagesSpaFallback() {
 
 export default defineConfig({
   base: process.env.GITHUB_PAGES === 'true' ? githubPagesBase : '/',
+  define: {
+    'import.meta.env.VITE_GITHUB_REPO_URL': JSON.stringify(githubRepoUrl),
+  },
   plugins: [
     vue(),
     UnoCSS(),

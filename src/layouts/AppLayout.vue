@@ -5,8 +5,7 @@ import { useTheme } from '@/composables/useTheme'
 const route = useRoute()
 const { isDark, mode, setMode, toggleDark } = useTheme()
 
-/** 公开源码仓库（GitHub Pages 访客拉代码用） */
-const githubRepoUrl = 'https://github.com/T34-active/barbell-financial-console'
+const githubRepoUrl = import.meta.env.VITE_GITHUB_REPO_URL
 
 const navItems = [
   { name: 'dashboard', label: '总览', icon: 'i-carbon-dashboard', to: '/' },
