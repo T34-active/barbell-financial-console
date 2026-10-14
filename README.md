@@ -19,6 +19,8 @@ npm install
 npm run dev
 ```
 
+`src/components.d.ts`、`src/auto-imports.d.ts`、`.eslintrc-auto-import.json` 由 unplugin 自动生成，已写入 `.gitignore`，**不要提交**。克隆后 `npm run build` 会先跑 `npm run codegen`；`npm run dev` 也会在本机生成上述文件。
+
 ## 构建
 
 ```bash
