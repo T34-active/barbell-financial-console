@@ -12,6 +12,14 @@ dist
 dist-ssr
 *.local
 
+# unplugin 自动生成（npm run codegen / build 会重建）
+src/components.d.ts
+src/auto-imports.d.ts
+.eslintrc-auto-import.json
+
+# gh pr create 临时正文
+.github/pr-body-temp.md
+
 # 个人账本只留在本机，不要提交
 public/pbfc-finance/
 public/pbfc-finance.json

@@ -351,7 +351,7 @@ async function handleImportFile(event: Event) {
           <label class="mb-2 block text-sm text-ink-muted">外观</label>
           <el-radio-group
             :model-value="themeMode"
-            @update:model-value="(v) => setThemeMode(v as ThemeMode)"
+            @update:model-value="(v: ThemeMode) => setThemeMode(v)"
           >
             <el-radio-button value="light">白天</el-radio-button>
             <el-radio-button value="dark">黑夜</el-radio-button>
@@ -364,7 +364,7 @@ async function handleImportFile(event: Event) {
           <label class="mb-2 block text-sm text-ink-muted">涨跌配色</label>
           <el-radio-group
             :model-value="quoteScheme"
-            @update:model-value="(v) => setQuoteScheme(v as QuoteColorScheme)"
+            @update:model-value="(v: QuoteColorScheme) => setQuoteScheme(v)"
           >
             <el-radio-button value="cn">红涨绿跌</el-radio-button>
             <el-radio-button value="us">绿涨红跌</el-radio-button>
