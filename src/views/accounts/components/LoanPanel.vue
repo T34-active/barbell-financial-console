@@ -231,88 +231,116 @@ defineExpose({ openCreate })
 </script>
 
 <template>
-  <article
-    v-if="!openLoans.length"
-    class="panel flex cursor-pointer flex-col gap-3 px-4 py-4"
-    @click="openCreate"
-  >
-    <div class="flex items-start justify-between gap-3">
+  <section class="panel space-y-3 px-4 py-4 md:px-5">
+    <div class="flex flex-wrap items-start justify-between gap-3">
       <div>
         <p class="font-medium">借出 / 应收</p>
-        <p class="mt-1 text-xs text-ink-muted">别人欠我的钱，点这里登记</p>
-      </div>
-      <el-button size="small" plain @click.stop="openCreate">登记</el-button>
-    </div>
-    <div>
-      <p class="text-xs text-ink-muted">未收回</p>
-      <p class="stat-num mt-0.5 text-xl font-semibold">
-        {{ formatMoney(store.openLendReceivableCny, 'CNY') }}
-      </p>
-    </div>
-  </article>
-
-  <article
-    v-for="loan in openLoans"
-    :key="loan.id"
-    class="panel flex cursor-pointer flex-col gap-3 px-4 py-4"
-    @click="openEdit(loan)"
-  >
-    <div class="flex items-start justify-between gap-3">
-      <div class="min-w-0">
-        <p class="font-medium">{{ loan.counterparty }}</p>
-        <p class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-ink-muted">
-          <span>借出 / 应收</span>
-          <span class="rounded px-1.5 py-0.5" :class="statusClass(loan.status)">
-            {{ statusLabel(loan.status) }}
-          </span>
-          <span
-            v-if="isOverdue(loan)"
-            class="rounded bg-alert-soft px-1.5 py-0.5 text-alert"
-          >
-            逾期
-          </span>
+        <p class="mt-1 text-xs text-ink-muted">
+          未收回
+          <span class="stat-num text-ink">{{ formatMoney(store.openLendReceivableCny, 'CNY') }}</span>
+          · {{ openLoans.length }} 笔在途
         </p>
       </div>
-      <el-button size="small" plain @click.stop="openEdit(loan)">修改</el-button>
+      <el-button size="small" plain @click="openCreate">登记借出</el-button>
     </div>
-    <div>
-      <p class="text-xs text-ink-muted">未收回</p>
-      <p class="stat-num mt-0.5 text-xl font-semibold">
-        {{ formatMoney(loan.remaining, 'CNY') }}
-      </p>
-      <p class="mt-1 text-xs text-ink-muted">
-        本金 {{ formatMoney(loan.amount, 'CNY') }} · 到期 {{ loan.due_at || '—' }}
-        <span v-if="daysHint(loan)">· {{ daysHint(loan) }}</span>
-      </p>
-      <p class="mt-0.5 text-xs text-ink-muted">
-        来源 {{ store.fundSourceLabel(loan.funded_from) }}
-        <span v-if="loan.note">· {{ loan.note }}</span>
-      </p>
-    </div>
-  </article>
 
-  <div v-if="closedLoans.length" class="order-last sm:col-span-2">
-    <button
-      type="button"
-      class="text-xs text-ink-muted underline-offset-2 hover:underline"
-      @click="showHistory = !showHistory"
+    <el-table
+      :data="openLoans"
+      stripe
+      size="small"
+      empty-text="暂无在途借出，点右上角登记"
+      class="w-full"
+      @row-click="openEdit"
     >
-      {{ showHistory ? '收起' : '展开' }}已结束（{{ closedLoans.length }}）
-    </button>
-    <div v-if="showHistory" class="mt-2 space-y-2">
+      <el-table-column prop="counterparty" label="借款人" min-width="110" show-overflow-tooltip />
+      <el-table-column label="状态" min-width="120">
+        <template #default="{ row }">
+          <span class="inline-flex flex-wrap items-center gap-1">
+            <span class="rounded px-1.5 py-0.5 text-xs" :class="statusClass(row.status)">
+              {{ statusLabel(row.status) }}
+            </span>
+            <span
+              v-if="isOverdue(row)"
+              class="rounded bg-alert-soft px-1.5 py-0.5 text-xs text-alert"
+            >
+              逾期
+            </span>
+          </span>
+        </template>
+      </el-table-column>
+      <el-table-column label="未收回" min-width="110" align="right">
+        <template #default="{ row }">
+          <span class="stat-num">{{ formatMoney(row.remaining, 'CNY') }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="本金" min-width="100" align="right">
+        <template #default="{ row }">
+          {{ formatMoney(row.amount, 'CNY') }}
+        </template>
+      </el-table-column>
+      <el-table-column label="到期" min-width="150">
+        <template #default="{ row }">
+          <span>{{ row.due_at || '—' }}</span>
+          <span v-if="daysHint(row)" class="ml-1 text-ink-muted">{{ daysHint(row) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="来源" min-width="120" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ store.fundSourceLabel(row.funded_from) }}
+        </template>
+      </el-table-column>
+      <el-table-column label="备注" min-width="120" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ row.note || '—' }}
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="88" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="primary" size="small" @click.stop="openEdit(row)">修改</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <div v-if="closedLoans.length">
       <button
-        v-for="loan in closedLoans"
-        :key="loan.id"
         type="button"
-        class="block w-full rounded-lg bg-surface px-3 py-2 text-left text-xs text-ink-muted"
-        @click="openEdit(loan)"
+        class="text-xs text-ink-muted underline-offset-2 hover:underline"
+        @click="showHistory = !showHistory"
       >
-        <span class="font-medium text-ink">{{ loan.counterparty }}</span>
-        · {{ statusLabel(loan.status) }} · {{ formatMoney(loan.amount, 'CNY') }} · 到期
-        {{ loan.due_at || '—' }}
+        {{ showHistory ? '收起' : '展开' }}已结束（{{ closedLoans.length }}）
       </button>
+      <el-table
+        v-if="showHistory"
+        :data="closedLoans"
+        stripe
+        size="small"
+        class="mt-2 w-full"
+        @row-click="openEdit"
+      >
+        <el-table-column prop="counterparty" label="借款人" min-width="110" show-overflow-tooltip />
+        <el-table-column label="状态" min-width="96">
+          <template #default="{ row }">
+            {{ statusLabel(row.status) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="本金" min-width="100" align="right">
+          <template #default="{ row }">
+            {{ formatMoney(row.amount, 'CNY') }}
+          </template>
+        </el-table-column>
+        <el-table-column label="到期" min-width="110">
+          <template #default="{ row }">
+            {{ row.due_at || '—' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="88" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click.stop="openEdit(row)">查看</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </div>
-  </div>
+  </section>
 
   <el-dialog
     v-model="createVisible"

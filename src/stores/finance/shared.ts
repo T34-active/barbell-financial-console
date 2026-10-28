@@ -1,7 +1,7 @@
 import { computed } from 'vue'
 import type { BaseCurrency } from '@/types/finance'
 import { convertCurrency, stockMarketValue } from '@/utils/currency'
-import { add, round, sub } from '@/utils/decimal'
+import { add, mul, round, sub } from '@/utils/decimal'
 import { resolveHtxYieldRate } from '@/utils/htx-rebalance'
 import type { FinanceRefs } from './state'
 
@@ -59,9 +59,31 @@ export function createShared(refs: FinanceRefs) {
     yulibao.amount = round(yulibaoBucketTotal(), 2)
   }
 
-  /** 改余利宝总额：总额含旅游暂存 / 种子 / 观察仓，差额归应急金 */
+  /** 改余利宝总额：增量（利息/红包零头）进观察仓；减量优先扣应急金，不足再扣观察仓→旅游→种子 */
   function applyYulibaoTotal(next: number) {
     const b = salary.value.buckets
+    const oldTotal = round(yulibaoBucketTotal(), 2)
+    const delta = round(sub(next, oldTotal), 2)
+
+    if (delta > 0) {
+      b.cash_observation = round(add(b.cash_observation, delta), 2)
+    } else if (delta < 0) {
+      let need = round(mul(delta, -1), 2)
+      const cutEmer = Math.min(b.emergency_reserve, need)
+      b.emergency_reserve = round(sub(b.emergency_reserve, cutEmer), 2)
+      need = round(sub(need, cutEmer), 2)
+      if (need > 0) {
+        const cutObs = Math.min(b.cash_observation, need)
+        b.cash_observation = round(sub(b.cash_observation, cutObs), 2)
+        need = round(sub(need, cutObs), 2)
+        const travel = b.travel_fund_pocket ?? 0
+        const cutTravel = Math.min(travel, need)
+        b.travel_fund_pocket = round(sub(travel, cutTravel), 2)
+        need = round(sub(need, cutTravel), 2)
+        b.us_seed_parking = round(Math.max(0, sub(b.us_seed_parking, need)), 2)
+      }
+    }
+
     const parking = b.us_seed_parking
     const observation = b.cash_observation
     const travel = b.travel_fund_pocket ?? 0

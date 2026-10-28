@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import PoolAccountCard from '@/components/accounts/PoolAccountCard.vue'
 import LoanPanel from '../components/LoanPanel.vue'
 import { useFinanceStore } from '@/stores/finance'
-import { formatMoney } from '@/utils/currency'
+import { formatMoney, formatPercent } from '@/utils/currency'
+import { formatBeijingDateTime } from '@/utils/datetime'
 import { div, mul, round } from '@/utils/decimal'
 import type { PoolAccount } from '@/types/finance'
 
@@ -71,6 +71,8 @@ function saveRmbAccount() {
         name,
         note: rmbForm.value.note.trim() || undefined,
       })
+      store.updatePoolAmount('rmb_pool', editingId, rmbForm.value.amount)
+      savePoolYield(editingId, yieldPct > 0 ? div(yieldPct, 100) : 0)
       ElMessage.success(`已修改 ${name}`)
     } else {
       store.upsertPoolAccount('rmb_pool', {
@@ -130,43 +132,77 @@ function savePoolYield(id: string, yieldRate: number) {
   }
 }
 
-function saveRmbAmount(id: string, amount: number) {
-  try {
-    store.updatePoolAmount('rmb_pool', id, amount)
-  } catch (error) {
-    if (error instanceof Error) ElMessage.error(error.message)
-  }
+function yieldText(account: PoolAccount) {
+  const rate = account.yield_rate
+  if (!(rate != null && rate > 0)) return '—'
+  return formatPercent(rate)
+}
+
+function updatedText(account: PoolAccount) {
+  return account.amount_updated_at ? formatBeijingDateTime(account.amount_updated_at) : '—'
 }
 </script>
 
 <template>
-  <section class="space-y-3">
+  <section class="space-y-4">
     <div class="flex flex-wrap items-center justify-between gap-2">
       <p class="text-xs text-ink-muted">
-        自己填银行或账户名称。按 App 账面改余额，保存时显示这次加减了多少。
+        自己填银行或账户名称。按 App 账面改余额；表格方便一眼扫完全部账户。
       </p>
       <div class="flex flex-wrap gap-2">
         <el-button plain @click="loanPanel?.openCreate()">登记借出</el-button>
         <el-button type="primary" plain @click="openAddRmb">新增人民币账户</el-button>
       </div>
     </div>
-    <div class="grid gap-3 sm:grid-cols-2">
-      <LoanPanel ref="loanPanel" />
-      <PoolAccountCard
-        v-for="account in safeRmb"
-        :key="account.id"
-        :account="account"
-        editable
-        editable-yield
-        removable
-        renamable
-        @save-amount="(amount) => saveRmbAmount(account.id, amount)"
-        @save-yield="(rate) => savePoolYield(account.id, rate)"
-        @rename="openEditRmb(account)"
-        @remove="removeRmb(account)"
-      />
+
+    <div class="panel space-y-3 px-4 py-4 md:px-5">
+      <div class="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <p class="font-medium">人民币安全</p>
+          <p class="mt-0.5 text-xs text-ink-muted">{{ safeRmb.length }} 个账户</p>
+        </div>
+      </div>
+      <el-table
+        :data="safeRmb"
+        stripe
+        size="small"
+        empty-text="暂无人民币账户，点右上角新增"
+        class="w-full"
+        @row-click="openEditRmb"
+      >
+        <el-table-column prop="name" label="账户" min-width="140" show-overflow-tooltip />
+        <el-table-column label="余额" min-width="120" align="right">
+          <template #default="{ row }">
+            <span class="stat-num">{{ formatMoney(row.amount, row.currency) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="年化" min-width="88" align="right">
+          <template #default="{ row }">
+            {{ yieldText(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="备注" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.note || '—' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="更新" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ updatedText(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="132" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click.stop="openEditRmb(row)">
+              修改
+            </el-button>
+            <el-button link type="danger" size="small" @click.stop="removeRmb(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </div>
-    <p v-if="!safeRmb.length" class="text-sm text-ink-muted">暂无人民币账户，点右上角新增</p>
+
+    <LoanPanel ref="loanPanel" />
 
     <el-dialog
       v-model="rmbDialogVisible"
@@ -180,11 +216,11 @@ function saveRmbAmount(id: string, amount: number) {
           <label class="mb-1 block text-xs text-ink-muted">银行名称</label>
           <el-input v-model="rmbForm.name" placeholder="例如：招商银行、余额宝" maxlength="32" />
         </div>
-        <div v-if="!rmbEditingId">
-          <label class="mb-1 block text-xs text-ink-muted">初始余额（CNY）</label>
+        <div>
+          <label class="mb-1 block text-xs text-ink-muted">余额（CNY）</label>
           <AmountInput v-model="rmbForm.amount" :min="0" class="w-full!" />
         </div>
-        <div v-if="!rmbEditingId">
+        <div>
           <label class="mb-1 block text-xs text-ink-muted">年化收益率（%，可选）</label>
           <el-input-number
             v-model="rmbForm.yieldPct"

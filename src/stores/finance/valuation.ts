@@ -36,10 +36,19 @@ export function createValuation(
     accounts.value.hkd_pool.reduce((sum, item) => add(sum, toBase(item.amount, item.currency)), 0),
   )
 
+  const usBrokerCashValue = computed(() => {
+    const cash = accounts.value.us_broker_cash
+    if (!cash) return 0
+    return add(toBase(cash.hkd, 'HKD'), toBase(cash.usd, 'USD'))
+  })
+
   const usStockValue = computed(() =>
-    accounts.value.us_stock_pool.reduce(
-      (sum, item) => add(sum, toBase(stockMarketValue(item), item.currency)),
-      0,
+    add(
+      accounts.value.us_stock_pool.reduce(
+        (sum, item) => add(sum, toBase(stockMarketValue(item), item.currency)),
+        0,
+      ),
+      usBrokerCashValue.value,
     ),
   )
 
@@ -130,6 +139,13 @@ export function createValuation(
       pushPart('risk', id, accountLabel(id), value)
       riskValue = add(riskValue, value)
     }
+    const brokerCash = accounts.value.us_broker_cash
+    const brokerHkd = brokerCash ? toBase(brokerCash.hkd, 'HKD') : 0
+    const brokerUsd = brokerCash ? toBase(brokerCash.usd, 'USD') : 0
+    pushPart('risk', 'us_broker_hkd', '券商港币现金', brokerHkd)
+    pushPart('risk', 'us_broker_usd', '券商美元现金', brokerUsd)
+    riskValue = add(riskValue, brokerHkd, brokerUsd)
+
     // 美股种子暂存视为已承诺的进攻端
     const seedParking = toBase(buckets.us_seed_parking, 'CNY')
     pushPart('risk', 'us_seed_parking', '种子暂存', seedParking)
@@ -310,6 +326,7 @@ export function createValuation(
     rmbPoolValue,
     hkdPoolValue,
     usStockValue,
+    usBrokerCashValue,
     usStockCost,
     cryptoPoolValue,
     netWorth,

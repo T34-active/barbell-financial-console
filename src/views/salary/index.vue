@@ -4,12 +4,13 @@ import SafetyPadStatus from './components/SafetyPadStatus.vue'
 import SalaryAllocationTable from './components/SalaryAllocationTable.vue'
 import PaydayStatusBanner from './components/PaydayStatusBanner.vue'
 import FunFundPocket from './components/FunFundPocket.vue'
+import LedgerHistory from './components/LedgerHistory.vue'
 import { useFinanceStore } from '@/stores/finance'
 import { resolvePaydayStatus } from '@/utils/payday'
 import { useFinanceFormat } from '@/composables/useFinanceFormat'
 import { formatMoney, formatPercent } from '@/utils/currency'
 import { mul, round, sub } from '@/utils/decimal'
-import type { ExtraIncomeMode, SalaryAllocationRecord } from '@/types/finance'
+import type { ExtraIncomeMode } from '@/types/finance'
 
 const store = useFinanceStore()
 const { moneyInBase } = useFinanceFormat()
@@ -89,11 +90,6 @@ function syncRemitPricesFromStore() {
 
 function extraModeLabel(mode: ExtraIncomeMode) {
   return extraModes.value.find((item) => item.value === mode)?.label ?? mode
-}
-
-function salaryLineAmount(row: unknown, key: SalaryAllocationRecord['lines'][number]['key']) {
-  const record = row as SalaryAllocationRecord
-  return record.lines.find((line) => line.key === key)?.amount ?? 0
 }
 
 async function handleExtraIncome() {
@@ -526,81 +522,7 @@ async function handleReleaseObservation() {
       </div>
     </section>
 
-    <section class="panel px-4 py-5 md:px-5">
-      <h2 class="text-base font-semibold">入账历史</h2>
-      <el-table
-        :data="store.salary.history"
-        stripe
-        size="small"
-        empty-text="暂无记录。确认入账后将显示在这里。"
-        class="mt-3 w-full"
-      >
-        <el-table-column prop="year_month" label="账期" min-width="90" />
-        <el-table-column label="工资" min-width="110" align="right">
-          <template #default="{ row }">
-            {{ moneyInBase(row.salary, 'CNY') }}
-          </template>
-        </el-table-column>
-        <el-table-column label="爸妈" min-width="100" align="right">
-          <template #default="{ row }">
-            {{ moneyInBase(salaryLineAmount(row, 'parents'), 'CNY') }}
-          </template>
-        </el-table-column>
-        <el-table-column label="安全垫" min-width="100" align="right">
-          <template #default="{ row }">
-            {{ moneyInBase(salaryLineAmount(row, 'safety_pad'), 'CNY') }}
-          </template>
-        </el-table-column>
-        <el-table-column label="进攻" min-width="100" align="right">
-          <template #default="{ row }">
-            {{ moneyInBase(salaryLineAmount(row, 'us_seed'), 'CNY') }}
-          </template>
-        </el-table-column>
-        <el-table-column label="快乐" min-width="100" align="right">
-          <template #default="{ row }">
-            {{ moneyInBase(salaryLineAmount(row, 'fun_fund'), 'CNY') }}
-          </template>
-        </el-table-column>
-        <el-table-column label="旅游" min-width="100" align="right">
-          <template #default="{ row }">
-            {{ moneyInBase(salaryLineAmount(row, 'travel_fund'), 'CNY') }}
-          </template>
-        </el-table-column>
-        <el-table-column label="已花" min-width="90" align="right">
-          <template #default="{ row }">
-            {{ moneyInBase(row.fun_fund_spent, 'CNY') }}
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" min-width="160">
-          <template #default="{ row }">
-            <div class="flex flex-wrap gap-1">
-              <span
-                class="rounded px-2 py-0.5 text-xs"
-                :class="
-                  row.mode === 'divert_to_seed'
-                    ? 'bg-safe-soft text-safe'
-                    : 'bg-risk-soft text-risk'
-                "
-              >
-                {{ row.mode === 'divert_to_seed' ? '转美股种子' : '补安全垫' }}
-              </span>
-              <span
-                v-if="row.pe_guard_active"
-                class="rounded bg-risk-soft px-2 py-0.5 text-xs text-risk"
-              >
-                观察仓
-              </span>
-              <span
-                v-if="row.fun_fund_carried"
-                class="rounded bg-surface-tint px-2 py-0.5 text-xs text-ink-muted"
-              >
-                快乐已结转
-              </span>
-            </div>
-          </template>
-        </el-table-column>
-      </el-table>
-    </section>
+    <LedgerHistory />
 
     <el-dialog v-model="showRemitDialog" title="标记美股种子已汇出" width="92%" class="max-w-lg">
       <p class="mb-4 text-sm text-ink-muted">

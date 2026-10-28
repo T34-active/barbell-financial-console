@@ -166,6 +166,10 @@ export const seedFinanceState: FinanceState = {
         est_div_yield: 0.034,
       },
     ],
+    us_broker_cash: {
+      hkd: 0,
+      usd: 0,
+    },
     crypto_pool: [
       {
         id: 'htx_earn_usdt',

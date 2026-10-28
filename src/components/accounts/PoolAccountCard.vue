@@ -431,6 +431,9 @@ function submitTransfer() {
             {{ formatMoney(store.cashObservation, 'CNY') }}
           </template>
         </p>
+        <p v-if="isYulibao" class="text-xs text-ink-muted">
+          改总额：增加额（利息/红包零头）进观察仓；减少额优先扣应急金
+        </p>
       </div>
 
       <div

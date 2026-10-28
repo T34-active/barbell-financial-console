@@ -198,6 +198,7 @@ const okxYieldPercent = computed({
   set: (value: number) => store.updateRules({ okx_yield_rate: div(value, 100) }),
 })
 
+
 const ratioParents = ref(mul(store.salary.settings.ratios.parents, 100))
 const ratioSafety = ref(mul(store.salary.settings.ratios.safety_pad, 100))
 const ratioUsSeed = ref(mul(store.salary.settings.ratios.us_seed, 100))
@@ -644,25 +645,19 @@ async function handleImportFile(event: Event) {
               </p>
             </div>
           </div>
-          <div
-            class="mt-4 rounded-lg border border-surface-line px-3 py-3 text-xs leading-6 text-ink-muted"
-          >
-            <p class="font-medium text-ink">PE 公式（点「拉取」从蛋卷基金取纳指100估值）</p>
-            <p class="stat-num mt-2 text-ink">个股 PE = 股价 / 每股收益（EPS）</p>
-            <p class="stat-num mt-1 text-ink">
-              纳指 PE ≈ 成分股市值合计 / 成分股近 12 个月盈利合计
-            </p>
-            <p class="mt-2">
-              本控制台判定：保险丝开启 且 当前纳指 PE &gt; 阈值 → 进攻份额进观察仓。 当前
-              {{ peCurrent }} {{ peCurrent > peThreshold ? '>' : '≤' }} 阈值 {{ peThreshold }}，
-              {{
-                peGuardEnabled
-                  ? peCurrent > peThreshold
-                    ? '观察仓生效'
-                    : '未触发'
-                  : '保险丝已关闭'
-              }}。
-            </p>
+          <p class="mt-3 text-xs leading-5 text-ink-muted">
+            判定：保险丝开启且当前 {{ peCurrent }}
+            {{ peCurrent > peThreshold ? '>' : '≤' }} 阈值 {{ peThreshold }} →
+            {{
+              peGuardEnabled
+                ? peCurrent > peThreshold
+                  ? '观察仓生效'
+                  : '未触发'
+                : '保险丝已关闭'
+            }}。
+          </p>
+          <div class="mt-3 rounded-lg border border-surface-line px-3 py-2 text-xs leading-5 text-ink-muted">
+            <p class="font-medium text-ink">PE：个股 = 股价/EPS；纳指 ≈ 市值合计/近12月盈利合计（「拉取」取蛋卷纳指100估值）</p>
           </div>
         </div>
 
@@ -670,8 +665,7 @@ async function handleImportFile(event: Event) {
           <div>
             <p class="text-sm font-medium">估值平均中枢 &amp; 恐贪指数</p>
             <p class="mt-1 text-xs text-ink-muted">
-              中枢作估值锚点（对比当前 PE）；恐贪指数来自 CNN Fear &amp;
-              Greed（0–100），可手改或拉取
+              中枢作估值锚点（对比当前 PE）；恐贪指数来自 CNN Fear &amp; Greed（0–100），可手改或拉取
             </p>
           </div>
           <div class="mt-4 grid gap-4 lg:grid-cols-2 lg:items-start">
@@ -720,29 +714,8 @@ async function handleImportFile(event: Event) {
               <FearGreedMeter :score="fearGreedIndex" :label="fearGreedLabel" />
             </div>
           </div>
-          <div
-            class="mt-3 rounded-lg border border-surface-line px-3 py-2 text-[11px] leading-5 text-ink-muted"
-          >
-            <p>
-              半圆弧从左到右：绿 极度恐惧 → 黄 中性 → 红 极度贪婪。 指针落在弧上的位置即当前分数。
-            </p>
-            <p class="mt-1">
-              中枢仅作参考锚点，不自动改分配；保险丝仍按「当前 PE &gt; 阈值」判定。
-            </p>
-          </div>
-        </div>
-
-        <div class="rounded-lg border border-surface-line px-3 py-3 text-xs text-ink-muted">
-          <p class="font-medium text-ink">资产分类（只读种子）</p>
-          <p class="mt-2">安全：{{ store.settings.asset_classification.safe_assets.join(', ') }}</p>
-          <p class="mt-1">
-            进攻：{{ store.settings.asset_classification.offensive_assets.join(', ') }}
-          </p>
-          <p class="mt-1">
-            中性：{{ store.settings.asset_classification.neutral_assets.join(', ') }}
-          </p>
-          <p class="mt-1">
-            加密赌注：{{ (store.settings.asset_classification.crypto_assets ?? []).join(', ') }}
+          <p class="mt-3 text-[11px] leading-5 text-ink-muted">
+            中枢仅作参考锚点，不自动改分配；保险丝仍按「当前 PE &gt; 阈值」判定。
           </p>
         </div>
       </section>
@@ -881,3 +854,4 @@ async function handleImportFile(event: Event) {
     </div>
   </div>
 </template>
+

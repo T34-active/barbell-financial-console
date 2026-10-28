@@ -88,6 +88,14 @@ export interface PoolAccount {
 /** 美股现价所属时段 */
 export type UsQuoteSession = 'pre' | 'regular' | 'post'
 
+/** 券商账户里尚未买入的现金 */
+export interface UsBrokerCash {
+  /** 港币现金 */
+  hkd: number
+  /** 美元现金 */
+  usd: number
+}
+
 /** 美股持仓 */
 export interface UsStockHolding {
   id: string
@@ -193,6 +201,8 @@ export interface AccountsState {
   rmb_pool: PoolAccount[]
   hkd_pool: PoolAccount[]
   us_stock_pool: UsStockHolding[]
+  /** 已汇入券商、尚未买入的现金，计入美股池 */
+  us_broker_cash: UsBrokerCash
   /** 加密/交易所资产（默认归中性） */
   crypto_pool: PoolAccount[]
 }
@@ -457,7 +467,7 @@ export interface FinanceState {
   loans: LoansState
 }
 
-export type PoolKey = keyof AccountsState
+export type PoolKey = 'rmb_pool' | 'hkd_pool' | 'us_stock_pool' | 'crypto_pool'
 
 export type BarbellSleeve = 'safe' | 'neutral' | 'risk'
 

@@ -170,7 +170,22 @@ export function normalizeAccounts(raw: AccountsState | undefined): AccountsState
     rmb_pool: rmb,
     hkd_pool: hkd,
     us_stock_pool: raw.us_stock_pool ?? seed.us_stock_pool,
+    us_broker_cash: normalizeUsBrokerCash(raw.us_broker_cash, seed.us_broker_cash),
     crypto_pool: crypto,
+  }
+}
+
+/** 旧账没有券商现金时用种子余额；已保存的 0 保留，不再写回种子 */
+function normalizeUsBrokerCash(
+  raw: AccountsState['us_broker_cash'] | undefined,
+  seed: AccountsState['us_broker_cash'],
+): AccountsState['us_broker_cash'] {
+  if (!raw || typeof raw !== 'object') return { hkd: seed.hkd, usd: seed.usd }
+  const hkd = Number(raw.hkd)
+  const usd = Number(raw.usd)
+  return {
+    hkd: Number.isFinite(hkd) && hkd >= 0 ? round(hkd, 2) : seed.hkd,
+    usd: Number.isFinite(usd) && usd >= 0 ? round(usd, 2) : seed.usd,
   }
 }
 

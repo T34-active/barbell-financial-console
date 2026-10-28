@@ -59,15 +59,32 @@ export function createAccounts(
     }
   }
 
-  /** 补仓：股数累加，持仓价按原成本与本次成交额摊薄 */
+  /** 按券商 App 改港币/美元现金。补仓会另扣美元现金。 */
+  function updateUsBrokerCash(next: { hkd: number; usd: number }) {
+    if (!(next.hkd >= 0) || !(next.usd >= 0)) throw new Error('券商现金不能为负')
+    accounts.value.us_broker_cash = {
+      hkd: round(next.hkd, 2),
+      usd: round(next.usd, 2),
+    }
+  }
+
+  /** 补仓：股数累加、持仓价摊薄，并按成交额扣美元现金 */
   function addToStockHolding(id: string, buyShares: number, buyPrice: number) {
     const stock = accounts.value.us_stock_pool.find((item) => item.id === id)
     if (!stock) throw new Error(`未找到持仓 ${id}`)
     if (!(buyShares > 0)) throw new Error(`${stock.symbol} 买入数量须大于 0`)
     if (!(buyPrice > 0)) throw new Error(`${stock.symbol} 成交价须大于 0`)
     const next = holdingAfterBuy(stock.shares, stock.cost_price, buyShares, buyPrice)
+    const cash = accounts.value.us_broker_cash ?? { hkd: 0, usd: 0 }
+    if (cash.usd + 1e-9 < next.buy_amount) {
+      throw new Error(`美元现金不足：需 ${next.buy_amount} USD，现有 ${cash.usd} USD`)
+    }
     stock.shares = next.shares
     stock.cost_price = next.cost_price
+    accounts.value.us_broker_cash = {
+      hkd: round(cash.hkd, 2),
+      usd: round(sub(cash.usd, next.buy_amount), 2),
+    }
   }
 
   function ensureClassId(list: string[], id: string) {
@@ -470,6 +487,7 @@ export function createAccounts(
   return {
     updateStockPrices,
     updateStockHoldings,
+    updateUsBrokerCash,
     addToStockHolding,
     upsertPoolAccount,
     updatePoolAmount,
